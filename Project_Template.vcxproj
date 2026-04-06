@@ -207,6 +207,8 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
     <ClCompile Include="helper\glslprogram.cpp" />
     <ClCompile Include="helper\glutils.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="SkyboxCubemap.cpp" />
+    <ClCompile Include="UIOverlay.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="camera.h" />
@@ -216,12 +218,21 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
     <ClInclude Include="helper\scenerunner.h" />
     <ClInclude Include="helper\stb\stb_image.h" />
     <ClInclude Include="helper\stb\stb_image_write.h" />
+    <ClInclude Include="SimpleOBJLoader.h" />
+    <ClInclude Include="SkyboxCubemap.h" />
+    <ClInclude Include="UIOverlay.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="basic.frag" />
-    <None Include="basic.vert" />
-    <None Include="water.frag" />
-    <None Include="water.vert" />
+    <None Include="shader\basic.frag" />
+    <None Include="shader\basic.vert" />
+    <None Include="shader\depth.frag" />
+    <None Include="shader\depth.vert" />
+    <None Include="shader\particle.frag" />
+    <None Include="shader\particle.vert" />
+    <None Include="shader\skybox.frag" />
+    <None Include="shader\skybox.vert" />
+    <None Include="shader\water.frag" />
+    <None Include="shader\water.vert" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

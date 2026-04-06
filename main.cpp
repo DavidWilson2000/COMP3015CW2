@@ -5,222 +5,163 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <string>
-#include <cstdlib>
-#include <ctime>
-#include <sstream>
-#include <cmath>
 #include <algorithm>
 #include <cstddef>
+#include <cmath>
+#include <ctime>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
 
-// ------------------------------------------------------------
-// Window settings
-// ------------------------------------------------------------
+#define STB_IMAGE_IMPLEMENTATION
+
+#include "helper/stb/stb_image.h"
+#include "SimpleOBJLoader.h"
+#include "SkyboxCubemap.h"
+#include "UIOverlay.h"
+
+
 const unsigned int SCR_WIDTH = 1280;
 const unsigned int SCR_HEIGHT = 720;
 const unsigned int SHADOW_WIDTH = 2048;
 const unsigned int SHADOW_HEIGHT = 2048;
+const int MAX_PARTICLES = 300;
 
-// ------------------------------------------------------------
-// Input
-// ------------------------------------------------------------
+const std::string BASIC_VERT_PATH = "shader/basic.vert";
+const std::string BASIC_FRAG_PATH = "shader/basic.frag";
+const std::string WATER_VERT_PATH = "shader/water.vert";
+const std::string WATER_FRAG_PATH = "shader/water.frag";
+const std::string DEPTH_VERT_PATH = "shader/depth.vert";
+const std::string DEPTH_FRAG_PATH = "shader/depth.frag";
+const std::string PARTICLE_VERT_PATH = "shader/particle.vert";
+const std::string PARTICLE_FRAG_PATH = "shader/particle.frag";
+const std::string SKYBOX_VERT_PATH = "shader/skybox.vert";
+const std::string SKYBOX_FRAG_PATH = "shader/skybox.frag";
+
 bool keys[1024] = { false };
 bool fishPressed = false;
 bool sellPressed = false;
-bool rodUpgradePressed = false;
-bool engineUpgradePressed = false;
-bool cargoUpgradePressed = false;
+bool upgrade1Pressed = false;
+bool upgrade2Pressed = false;
+bool upgrade3Pressed = false;
 
-// ------------------------------------------------------------
-// Fish data
-// ------------------------------------------------------------
-enum class FishRarity
+struct ModelMesh
 {
-    Common,
-    Uncommon,
-    Rare,
-    Legendary
+    GLuint vao = 0;
+    GLuint vbo = 0;
+    size_t vertexCount = 0;
+    bool loaded = false;
 };
 
 struct FishData
 {
     std::string name;
-    FishRarity rarity;
+    int rarity; // 0 common, 1 uncommon, 2 rare, 3 legendary
     int value;
 };
-
-std::string rarityToString(FishRarity rarity)
-{
-    switch (rarity)
-    {
-    case FishRarity::Common: return "Common";
-    case FishRarity::Uncommon: return "Uncommon";
-    case FishRarity::Rare: return "Rare";
-    case FishRarity::Legendary: return "Legendary";
-    default: return "Unknown";
-    }
-}
 
 struct FishZone
 {
     glm::vec3 center;
     float radius;
     std::vector<FishData> fishPool;
-    glm::vec3 colour;
-    std::string zoneName;
+    glm::vec3 tint;
+    glm::vec3 fogColor;
+    float fogNear;
+    float fogFar;
     float danger;
+    std::string zoneName;
 
     bool contains(const glm::vec3& pos) const
     {
-        float distance = glm::length(glm::vec2(pos.x - center.x, pos.z - center.z));
-        return distance <= radius;
-    }
-
-    FishData catchFish(int rodLevel) const
-    {
-        int roll = rand() % 100;
-        int luckBonus = (rodLevel - 1) * 6;
-        roll = std::max(0, roll - luckBonus);
-
-        std::vector<FishData> commons;
-        std::vector<FishData> uncommons;
-        std::vector<FishData> rares;
-        std::vector<FishData> legendaries;
-
-        for (const auto& fish : fishPool)
-        {
-            switch (fish.rarity)
-            {
-            case FishRarity::Common: commons.push_back(fish); break;
-            case FishRarity::Uncommon: uncommons.push_back(fish); break;
-            case FishRarity::Rare: rares.push_back(fish); break;
-            case FishRarity::Legendary: legendaries.push_back(fish); break;
-            }
-        }
-
-        if (roll < 45 && !commons.empty())
-            return commons[rand() % commons.size()];
-        else if (roll < 75 && !uncommons.empty())
-            return uncommons[rand() % uncommons.size()];
-        else if (roll < 94 && !rares.empty())
-            return rares[rand() % rares.size()];
-        else if (!legendaries.empty())
-            return legendaries[rand() % legendaries.size()];
-
-        return fishPool[rand() % fishPool.size()];
+        return glm::length(glm::vec2(pos.x - center.x, pos.z - center.z)) <= radius;
     }
 };
 
-// ------------------------------------------------------------
-// Boat
-// ------------------------------------------------------------
-class Boat
+struct CargoItem
 {
-public:
-    Boat()
-        : position(0.0f, 0.2f, 0.0f),
-        rotationY(0.0f),
-        velocity(0.0f),
-        maxForwardSpeed(7.0f),
-        maxBackwardSpeed(3.5f),
-        acceleration(4.5f),
-        deceleration(3.0f),
-        turnSpeed(85.0f)
-    {
-    }
+    FishData fish;
+};
+
+struct Boat
+{
+    glm::vec3 position = glm::vec3(0.0f, 0.18f, 0.0f);
+    float rotationY = 0.0f;
+    float velocity = 0.0f;
+    float maxForwardSpeed = 7.0f;
+    float maxBackwardSpeed = 3.5f;
+    float acceleration = 4.5f;
+    float deceleration = 3.0f;
+    float turnSpeed = 85.0f;
 
     void update(float dt)
     {
         if (keys[GLFW_KEY_W])
         {
             velocity += acceleration * dt;
-            if (velocity > maxForwardSpeed)
-                velocity = maxForwardSpeed;
+            if (velocity > maxForwardSpeed) velocity = maxForwardSpeed;
         }
         else if (keys[GLFW_KEY_S])
         {
             velocity -= acceleration * dt;
-            if (velocity < -maxBackwardSpeed)
-                velocity = -maxBackwardSpeed;
+            if (velocity < -maxBackwardSpeed) velocity = -maxBackwardSpeed;
         }
         else
         {
             if (velocity > 0.0f)
             {
                 velocity -= deceleration * dt;
-                if (velocity < 0.0f)
-                    velocity = 0.0f;
+                if (velocity < 0.0f) velocity = 0.0f;
             }
             else if (velocity < 0.0f)
             {
                 velocity += deceleration * dt;
-                if (velocity > 0.0f)
-                    velocity = 0.0f;
+                if (velocity > 0.0f) velocity = 0.0f;
             }
         }
 
         float turnAmount = 0.0f;
-        if (keys[GLFW_KEY_A])
-            turnAmount += 1.0f;
-        if (keys[GLFW_KEY_D])
-            turnAmount -= 1.0f;
+        if (keys[GLFW_KEY_A]) turnAmount += 1.0f;
+        if (keys[GLFW_KEY_D]) turnAmount -= 1.0f;
 
-        float speedFactor = glm::clamp(std::abs(velocity) / std::max(0.1f, maxForwardSpeed), 0.2f, 1.0f);
+        float speedFactor = glm::clamp(std::abs(velocity) / std::max(maxForwardSpeed, 0.01f), 0.2f, 1.0f);
         rotationY += turnAmount * turnSpeed * speedFactor * dt;
 
         float radians = glm::radians(rotationY);
         glm::vec3 forward(std::sin(radians), 0.0f, std::cos(radians));
         position += forward * velocity * dt;
 
-        float limit = 55.0f;
+        float limit = 56.0f;
         position.x = glm::clamp(position.x, -limit, limit);
         position.z = glm::clamp(position.z, -limit, limit);
     }
-
-    glm::vec3 position;
-    float rotationY;
-    float velocity;
-    float maxForwardSpeed;
-    float maxBackwardSpeed;
-    float acceleration;
-    float deceleration;
-    float turnSpeed;
 };
 
-const struct FishZone* getCurrentZone();
-glm::vec3 getCurrentFogColor();
-float getCurrentFogDensity();
-
-// ------------------------------------------------------------
-// Globals
-// ------------------------------------------------------------
-Boat boat;
-std::vector<FishZone> zones;
-std::vector<FishData> cargoHold;
-std::string lastCatchText = "No fish caught yet";
-int totalMoney = 0;
-int cargoCapacity = 5;
-int rodLevel = 1;
-int engineLevel = 1;
-int cargoLevel = 1;
-float fishCooldown = 0.0f;
-float catchFlashTimer = 0.0f;
-float statusMessageTimer = 0.0f;
-float worldDanger = 0.0f;
-const glm::vec3 dockCenter(0.0f, 0.0f, 0.0f);
-const float dockRadius = 6.0f;
+float getWaterHeight(float x, float z, float time)
+{
+    float y = 0.0f;
+    y += std::sin(x * 0.30f + time * 1.35f) * 0.16f;
+    y += std::cos(z * 0.22f + time * 1.10f) * 0.12f;
+    y += std::sin((x + z) * 0.12f + time * 0.80f) * 0.10f;
+    return y;
+}
+float clampf(float v, float lo, float hi)
+{
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
 
 struct Particle
 {
-    glm::vec3 position;
-    glm::vec3 velocity;
-    glm::vec4 color;
-    float size;
-    float life;
-    float maxLife;
+    glm::vec3 position{0.0f};
+    glm::vec3 velocity{0.0f};
+    glm::vec4 color{1.0f};
+    float life = 0.0f;
+    float size = 6.0f;
 };
 
 struct ParticleVertex
@@ -230,198 +171,198 @@ struct ParticleVertex
     float size;
 };
 
-std::vector<Particle> particles;
-const size_t MAX_PARTICLES = 600;
-
-glm::vec3 getCurrentFogColor()
+enum MaterialType
 {
-    const FishZone* zone = getCurrentZone();
-    if (!zone)
-        return glm::vec3(0.58f, 0.72f, 0.84f);
-
-    if (zone->danger < 0.25f)
-        return glm::vec3(0.66f, 0.76f, 0.84f);
-    if (zone->danger < 0.6f)
-        return glm::vec3(0.52f, 0.68f, 0.70f);
-    return glm::vec3(0.34f, 0.40f, 0.48f);
-}
-
-float getCurrentFogDensity()
-{
-    const FishZone* zone = getCurrentZone();
-    if (!zone)
-        return 0.016f;
-    return 0.018f + zone->danger * 0.030f;
-}
-
-// ------------------------------------------------------------
-// Shader helpers
-// ------------------------------------------------------------
-std::string readTextFile(const std::string& path)
-{
-    std::ifstream file(path);
-    if (!file.is_open())
-    {
-        std::cerr << "Failed to open shader file: " << path << std::endl;
-        return "";
-    }
-
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
-}
-
-GLuint compileShader(GLenum type, const std::string& source, const std::string& debugName)
-{
-    GLuint shader = glCreateShader(type);
-    const char* src = source.c_str();
-    glShaderSource(shader, 1, &src, nullptr);
-    glCompileShader(shader);
-
-    GLint success;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-
-    if (!success)
-    {
-        char infoLog[1024];
-        glGetShaderInfoLog(shader, 1024, nullptr, infoLog);
-        std::cerr << "Shader compilation failed (" << debugName << "):\n" << infoLog << std::endl;
-    }
-
-    return shader;
-}
-
-GLuint createShaderProgram(const std::string& vertexPath, const std::string& fragmentPath)
-{
-    std::string vertexSrc = readTextFile(vertexPath);
-    std::string fragmentSrc = readTextFile(fragmentPath);
-
-    if (vertexSrc.empty() || fragmentSrc.empty())
-        return 0;
-
-    GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSrc, vertexPath);
-    GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentSrc, fragmentPath);
-
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vertexShader);
-    glAttachShader(program, fragmentShader);
-    glLinkProgram(program);
-
-    GLint success;
-    glGetProgramiv(program, GL_LINK_STATUS, &success);
-
-    if (!success)
-    {
-        char infoLog[1024];
-        glGetProgramInfoLog(program, 1024, nullptr, infoLog);
-        std::cerr << "Shader linking failed (" << vertexPath << ", " << fragmentPath << "):\n" << infoLog << std::endl;
-    }
-
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    return program;
-}
-
-// ------------------------------------------------------------
-// External shader files
-// ------------------------------------------------------------
-const std::string BASIC_VERT_PATH = "shader/basic.vert";
-const std::string BASIC_FRAG_PATH = "shader/basic.frag";
-const std::string WATER_VERT_PATH = "shader/water.vert";
-const std::string WATER_FRAG_PATH = "shader/water.frag";
-const std::string DEPTH_VERT_PATH = "shader/depth.vert";
-const std::string DEPTH_FRAG_PATH = "shader/depth.frag";
-const std::string PARTICLE_VERT_PATH = "shader/particle.vert";
-const std::string PARTICLE_FRAG_PATH = "shader/particle.frag";
-
-// ------------------------------------------------------------
-// Mesh data
-// ------------------------------------------------------------
-float cubeVertices[] = {
-    -0.5f,-0.5f,-0.5f,    0.0f, 0.0f,-1.0f,
-     0.5f,-0.5f,-0.5f,    0.0f, 0.0f,-1.0f,
-     0.5f, 0.5f,-0.5f,    0.0f, 0.0f,-1.0f,
-     0.5f, 0.5f,-0.5f,    0.0f, 0.0f,-1.0f,
-    -0.5f, 0.5f,-0.5f,    0.0f, 0.0f,-1.0f,
-    -0.5f,-0.5f,-0.5f,    0.0f, 0.0f,-1.0f,
-
-    -0.5f,-0.5f, 0.5f,    0.0f, 0.0f, 1.0f,
-     0.5f,-0.5f, 0.5f,    0.0f, 0.0f, 1.0f,
-     0.5f, 0.5f, 0.5f,    0.0f, 0.0f, 1.0f,
-     0.5f, 0.5f, 0.5f,    0.0f, 0.0f, 1.0f,
-    -0.5f, 0.5f, 0.5f,    0.0f, 0.0f, 1.0f,
-    -0.5f,-0.5f, 0.5f,    0.0f, 0.0f, 1.0f,
-
-    -0.5f, 0.5f, 0.5f,   -1.0f, 0.0f, 0.0f,
-    -0.5f, 0.5f,-0.5f,   -1.0f, 0.0f, 0.0f,
-    -0.5f,-0.5f,-0.5f,   -1.0f, 0.0f, 0.0f,
-    -0.5f,-0.5f,-0.5f,   -1.0f, 0.0f, 0.0f,
-    -0.5f,-0.5f, 0.5f,   -1.0f, 0.0f, 0.0f,
-    -0.5f, 0.5f, 0.5f,   -1.0f, 0.0f, 0.0f,
-
-     0.5f, 0.5f, 0.5f,    1.0f, 0.0f, 0.0f,
-     0.5f, 0.5f,-0.5f,    1.0f, 0.0f, 0.0f,
-     0.5f,-0.5f,-0.5f,    1.0f, 0.0f, 0.0f,
-     0.5f,-0.5f,-0.5f,    1.0f, 0.0f, 0.0f,
-     0.5f,-0.5f, 0.5f,    1.0f, 0.0f, 0.0f,
-     0.5f, 0.5f, 0.5f,    1.0f, 0.0f, 0.0f,
-
-    -0.5f,-0.5f,-0.5f,    0.0f,-1.0f, 0.0f,
-     0.5f,-0.5f,-0.5f,    0.0f,-1.0f, 0.0f,
-     0.5f,-0.5f, 0.5f,    0.0f,-1.0f, 0.0f,
-     0.5f,-0.5f, 0.5f,    0.0f,-1.0f, 0.0f,
-    -0.5f,-0.5f, 0.5f,    0.0f,-1.0f, 0.0f,
-    -0.5f,-0.5f,-0.5f,    0.0f,-1.0f, 0.0f,
-
-    -0.5f, 0.5f,-0.5f,    0.0f, 1.0f, 0.0f,
-     0.5f, 0.5f,-0.5f,    0.0f, 1.0f, 0.0f,
-     0.5f, 0.5f, 0.5f,    0.0f, 1.0f, 0.0f,
-     0.5f, 0.5f, 0.5f,    0.0f, 1.0f, 0.0f,
-    -0.5f, 0.5f, 0.5f,    0.0f, 1.0f, 0.0f,
-    -0.5f, 0.5f,-0.5f,    0.0f, 1.0f, 0.0f
+    MAT_WOOD = 0,
+    MAT_ROCK = 1,
+    MAT_GRASS = 2,
+    MAT_BOAT = 3,
+    MAT_BUOY = 4,
+    MAT_LIGHT = 5
 };
 
-float planeVertices[] = {
-    -0.5f, 0.0f, -0.5f,    0.0f, 1.0f, 0.0f,
-     0.5f, 0.0f, -0.5f,    0.0f, 1.0f, 0.0f,
-     0.5f, 0.0f,  0.5f,    0.0f, 1.0f, 0.0f,
+Boat boat;
+std::vector<FishZone> zones;
+std::vector<CargoItem> cargo;
+std::vector<Particle> particles(MAX_PARTICLES);
 
-     0.5f, 0.0f,  0.5f,    0.0f, 1.0f, 0.0f,
-    -0.5f, 0.0f,  0.5f,    0.0f, 1.0f, 0.0f,
-    -0.5f, 0.0f, -0.5f,    0.0f, 1.0f, 0.0f
-};
+int totalMoney = 0;
+int rodLevel = 1;
+int engineLevel = 1;
+int cargoLevel = 1;
+int cargoCapacity = 5;
+float fishCooldown = 0.0f;
+float catchFlashTimer = 0.0f;
+float catchMessageTimer = 0.0f;
+std::string lastCatchText = "No fish caught yet";
 
 GLuint cubeVAO = 0, cubeVBO = 0;
 GLuint planeVAO = 0, planeVBO = 0;
+GLuint skyboxVAO = 0, skyboxVBO = 0;
+GLuint particleVAO = 0, particleVBO = 0;
 
 GLuint basicShader = 0;
 GLuint waterShader = 0;
 GLuint depthShader = 0;
 GLuint particleShader = 0;
+GLuint skyboxShader = 0;
+
 GLuint shadowFBO = 0;
 GLuint shadowMap = 0;
-GLuint particleVAO = 0, particleVBO = 0;
+GLuint skyboxCubemap = 0;
+GLuint woodTex = 0;
+GLuint rockTex = 0;
+GLuint grassTex = 0;
+GLuint boatTex = 0;
+GLuint buoyTex = 0;
 
-// ------------------------------------------------------------
-// Utility
-// ------------------------------------------------------------
-void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+ModelMesh boatModel;
+
+float boatVisualY = 0.18f;
+float boatVisualPitch = 0.0f;
+float boatVisualRoll = 0.0f;
+
+float cubeVertices[] = {
+    -0.5f,-0.5f,-0.5f,  0,0,-1,  0,0,
+     0.5f,-0.5f,-0.5f,  0,0,-1,  1,0,
+     0.5f, 0.5f,-0.5f,  0,0,-1,  1,1,
+     0.5f, 0.5f,-0.5f,  0,0,-1,  1,1,
+    -0.5f, 0.5f,-0.5f,  0,0,-1,  0,1,
+    -0.5f,-0.5f,-0.5f,  0,0,-1,  0,0,
+
+    -0.5f,-0.5f, 0.5f,  0,0,1,  0,0,
+     0.5f,-0.5f, 0.5f,  0,0,1,  1,0,
+     0.5f, 0.5f, 0.5f,  0,0,1,  1,1,
+     0.5f, 0.5f, 0.5f,  0,0,1,  1,1,
+    -0.5f, 0.5f, 0.5f,  0,0,1,  0,1,
+    -0.5f,-0.5f, 0.5f,  0,0,1,  0,0,
+
+    -0.5f, 0.5f, 0.5f, -1,0,0,  1,0,
+    -0.5f, 0.5f,-0.5f, -1,0,0,  1,1,
+    -0.5f,-0.5f,-0.5f, -1,0,0,  0,1,
+    -0.5f,-0.5f,-0.5f, -1,0,0,  0,1,
+    -0.5f,-0.5f, 0.5f, -1,0,0,  0,0,
+    -0.5f, 0.5f, 0.5f, -1,0,0,  1,0,
+
+     0.5f, 0.5f, 0.5f,  1,0,0,  1,0,
+     0.5f, 0.5f,-0.5f,  1,0,0,  1,1,
+     0.5f,-0.5f,-0.5f,  1,0,0,  0,1,
+     0.5f,-0.5f,-0.5f,  1,0,0,  0,1,
+     0.5f,-0.5f, 0.5f,  1,0,0,  0,0,
+     0.5f, 0.5f, 0.5f,  1,0,0,  1,0,
+
+    -0.5f,-0.5f,-0.5f,  0,-1,0, 0,1,
+     0.5f,-0.5f,-0.5f,  0,-1,0, 1,1,
+     0.5f,-0.5f, 0.5f,  0,-1,0, 1,0,
+     0.5f,-0.5f, 0.5f,  0,-1,0, 1,0,
+    -0.5f,-0.5f, 0.5f,  0,-1,0, 0,0,
+    -0.5f,-0.5f,-0.5f,  0,-1,0, 0,1,
+
+    -0.5f, 0.5f,-0.5f,  0,1,0,  0,1,
+     0.5f, 0.5f,-0.5f,  0,1,0,  1,1,
+     0.5f, 0.5f, 0.5f,  0,1,0,  1,0,
+     0.5f, 0.5f, 0.5f,  0,1,0,  1,0,
+    -0.5f, 0.5f, 0.5f,  0,1,0,  0,0,
+    -0.5f, 0.5f,-0.5f,  0,1,0,  0,1
+};
+
+float planeVertices[] = {
+    -0.5f, 0.0f, -0.5f, 0,1,0, 0,0,
+     0.5f, 0.0f, -0.5f, 0,1,0, 4,0,
+     0.5f, 0.0f,  0.5f, 0,1,0, 4,4,
+     0.5f, 0.0f,  0.5f, 0,1,0, 4,4,
+    -0.5f, 0.0f,  0.5f, 0,1,0, 0,4,
+    -0.5f, 0.0f, -0.5f, 0,1,0, 0,0
+};
+
+float skyboxVertices[] = {
+    -1.0f,  1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f, -1.0f, -1.0f,
+     1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,  1.0f, -1.0f,
+
+    -1.0f, -1.0f,  1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f, -1.0f,
+    -1.0f,  1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,  1.0f,
+
+     1.0f, -1.0f, -1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f,
+     1.0f,  1.0f,  1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f, -1.0f,
+
+    -1.0f, -1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  1.0f,
+     1.0f,  1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f, -1.0f,  1.0f,
+
+    -1.0f,  1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,
+     1.0f,  1.0f,  1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f,
+
+    -1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,
+     1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f
+};
+
+std::string readTextFile(const std::string& path)
+{
+    std::ifstream file(path);
+    if (!file)
+    {
+        std::cerr << "Failed to open file: " << path << std::endl;
+        return "";
+    }
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    return buffer.str();
+}
+
+GLuint compileShader(GLenum type, const std::string& src)
+{
+    GLuint shader = glCreateShader(type);
+    const char* csrc = src.c_str();
+    glShaderSource(shader, 1, &csrc, nullptr);
+    glCompileShader(shader);
+
+    GLint success = 0;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        char infoLog[2048];
+        glGetShaderInfoLog(shader, 2048, nullptr, infoLog);
+        std::cerr << "Shader compile error:\n" << infoLog << std::endl;
+    }
+    return shader;
+}
+
+GLuint createShaderProgramFromFiles(const std::string& vertPath, const std::string& fragPath)
+{
+    std::string vertSrc = readTextFile(vertPath);
+    std::string fragSrc = readTextFile(fragPath);
+    GLuint vs = compileShader(GL_VERTEX_SHADER, vertSrc);
+    GLuint fs = compileShader(GL_FRAGMENT_SHADER, fragSrc);
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
+    GLint success = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+    if (!success)
+    {
+        char infoLog[2048];
+        glGetProgramInfoLog(program, 2048, nullptr, infoLog);
+        std::cerr << "Program link error:\n" << infoLog << std::endl;
+    }
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    return program;
+}
+
+void framebuffer_size_callback(GLFWwindow*, int width, int height)
 {
     glViewport(0, 0, width, height);
 }
 
-void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
+void key_callback(GLFWwindow* window, int key, int, int action, int)
 {
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
 
     if (key >= 0 && key < 1024)
     {
-        if (action == GLFW_PRESS)
-            keys[key] = true;
-        else if (action == GLFW_RELEASE)
-            keys[key] = false;
+        if (action == GLFW_PRESS) keys[key] = true;
+        else if (action == GLFW_RELEASE) keys[key] = false;
     }
 }
 
@@ -429,17 +370,15 @@ void setupCube()
 {
     glGenVertexArrays(1, &cubeVAO);
     glGenBuffers(1, &cubeVBO);
-
     glBindVertexArray(cubeVAO);
     glBindBuffer(GL_ARRAY_BUFFER, cubeVBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
-
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
     glBindVertexArray(0);
 }
 
@@ -447,38 +386,43 @@ void setupPlane()
 {
     glGenVertexArrays(1, &planeVAO);
     glGenBuffers(1, &planeVBO);
-
     glBindVertexArray(planeVAO);
     glBindBuffer(GL_ARRAY_BUFFER, planeVBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(planeVertices), planeVertices, GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
-
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
     glBindVertexArray(0);
 }
 
-void setupParticleSystem()
+void setupSkybox()
+{
+    glGenVertexArrays(1, &skyboxVAO);
+    glGenBuffers(1, &skyboxVBO);
+    glBindVertexArray(skyboxVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, skyboxVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), skyboxVertices, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+}
+
+void setupParticles()
 {
     glGenVertexArrays(1, &particleVAO);
     glGenBuffers(1, &particleVBO);
-
     glBindVertexArray(particleVAO);
     glBindBuffer(GL_ARRAY_BUFFER, particleVBO);
     glBufferData(GL_ARRAY_BUFFER, MAX_PARTICLES * sizeof(ParticleVertex), nullptr, GL_DYNAMIC_DRAW);
-
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(ParticleVertex), (void*)offsetof(ParticleVertex, position));
     glEnableVertexAttribArray(0);
-
     glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(ParticleVertex), (void*)offsetof(ParticleVertex, color));
     glEnableVertexAttribArray(1);
-
     glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(ParticleVertex), (void*)offsetof(ParticleVertex, size));
     glEnableVertexAttribArray(2);
-
     glBindVertexArray(0);
 }
 
@@ -492,6 +436,11 @@ void setVec3(GLuint shader, const char* name, const glm::vec3& vec)
     glUniform3fv(glGetUniformLocation(shader, name), 1, glm::value_ptr(vec));
 }
 
+void setVec4(GLuint shader, const char* name, const glm::vec4& vec)
+{
+    glUniform4fv(glGetUniformLocation(shader, name), 1, glm::value_ptr(vec));
+}
+
 void setFloat(GLuint shader, const char* name, float value)
 {
     glUniform1f(glGetUniformLocation(shader, name), value);
@@ -500,6 +449,204 @@ void setFloat(GLuint shader, const char* name, float value)
 void setInt(GLuint shader, const char* name, int value)
 {
     glUniform1i(glGetUniformLocation(shader, name), value);
+}
+
+bool loadOBJModel(const std::string& path, ModelMesh& outModel)
+{
+    std::vector<float> vertices;
+    std::string warning;
+    std::string error;
+
+    if (!SimpleOBJ::loadOBJInterleaved(path, vertices, &warning, &error))
+    {
+        if (!warning.empty()) std::cout << "OBJ warning: " << warning << std::endl;
+        if (!error.empty()) std::cerr << "OBJ error: " << error << std::endl;
+        std::cerr << "Failed to load OBJ: " << path << std::endl;
+        return false;
+    }
+
+    if (!warning.empty())
+        std::cout << "OBJ warning: " << warning << std::endl;
+
+    glGenVertexArrays(1, &outModel.vao);
+    glGenBuffers(1, &outModel.vbo);
+
+    glBindVertexArray(outModel.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, outModel.vbo);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+
+    glBindVertexArray(0);
+
+    outModel.vertexCount = vertices.size() / 8;
+    outModel.loaded = true;
+
+    std::cout << "Loaded OBJ model: " << path
+              << " | vertices: " << outModel.vertexCount << std::endl;
+
+    return true;
+}
+
+GLuint createTextureFromRGBData(const std::vector<unsigned char>& data, int width, int height)
+{
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data.data());
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    return tex;
+}
+
+GLuint loadTextureFromFile(const std::string& path, bool flipVertically = true)
+{
+    if (flipVertically)
+    {
+        stbi_set_flip_vertically_on_load(true);
+    }
+    else
+    {
+        stbi_set_flip_vertically_on_load(false);
+    }
+
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 0);
+
+    if (!data)
+    {
+        std::cerr << "Failed to load texture: " << path << std::endl;
+        return 0;
+    }
+
+    GLenum format = GL_RGB;
+    if (channels == 1) format = GL_RED;
+    else if (channels == 3) format = GL_RGB;
+    else if (channels == 4) format = GL_RGBA;
+
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    stbi_image_free(data);
+
+    std::cout << "Loaded texture: " << path << " (" << width << "x" << height << ", channels: " << channels << ")" << std::endl;
+
+    return tex;
+}
+
+GLuint createWoodTexture()
+{
+    const int w = 64, h = 64;
+    std::vector<unsigned char> data(w * h * 3);
+    for (int y = 0; y < h; ++y)
+    {
+        for (int x = 0; x < w; ++x)
+        {
+            float grain = std::sin(x * 0.35f) * 0.5f + 0.5f;
+            float knots = std::sin((x + y * 0.35f) * 0.18f) * 0.5f + 0.5f;
+            int i = (y * w + x) * 3;
+            data[i + 0] = static_cast<unsigned char>(85 + grain * 55 + knots * 12);
+            data[i + 1] = static_cast<unsigned char>(55 + grain * 25);
+            data[i + 2] = static_cast<unsigned char>(28 + grain * 15);
+        }
+    }
+    return createTextureFromRGBData(data, w, h);
+}
+
+GLuint createRockTexture()
+{
+    const int w = 64, h = 64;
+    std::vector<unsigned char> data(w * h * 3);
+    for (int y = 0; y < h; ++y)
+    {
+        for (int x = 0; x < w; ++x)
+        {
+            float noise = std::sin(x * 0.51f + y * 0.37f) * std::cos(y * 0.23f) * 0.5f + 0.5f;
+            float crack = (std::sin((x - y) * 0.25f) > 0.8f) ? 0.55f : 0.0f;
+            int c = static_cast<int>(85 + noise * 70 - crack * 40);
+            int i = (y * w + x) * 3;
+            data[i + 0] = static_cast<unsigned char>(clampf(c, 0, 255));
+            data[i + 1] = static_cast<unsigned char>(clampf(c + 5, 0, 255));
+            data[i + 2] = static_cast<unsigned char>(clampf(c + 10, 0, 255));
+        }
+    }
+    return createTextureFromRGBData(data, w, h);
+}
+
+GLuint createGrassTexture()
+{
+    const int w = 64, h = 64;
+    std::vector<unsigned char> data(w * h * 3);
+    for (int y = 0; y < h; ++y)
+    {
+        for (int x = 0; x < w; ++x)
+        {
+            float stripe = std::sin(x * 0.55f) * 0.5f + 0.5f;
+            float noise = std::cos((x + y) * 0.27f) * 0.5f + 0.5f;
+            int i = (y * w + x) * 3;
+            data[i + 0] = static_cast<unsigned char>(30 + stripe * 25);
+            data[i + 1] = static_cast<unsigned char>(100 + noise * 90);
+            data[i + 2] = static_cast<unsigned char>(35 + stripe * 20);
+        }
+    }
+    return createTextureFromRGBData(data, w, h);
+}
+
+GLuint createBoatTexture()
+{
+    const int w = 64, h = 64;
+    std::vector<unsigned char> data(w * h * 3);
+    for (int y = 0; y < h; ++y)
+    {
+        for (int x = 0; x < w; ++x)
+        {
+            bool line = (x % 16 == 0) || (y % 16 == 0);
+            int i = (y * w + x) * 3;
+            data[i + 0] = static_cast<unsigned char>(140 + (line ? 18 : 0));
+            data[i + 1] = static_cast<unsigned char>(32 + (line ? 10 : 0));
+            data[i + 2] = static_cast<unsigned char>(28 + (line ? 10 : 0));
+        }
+    }
+    return createTextureFromRGBData(data, w, h);
+}
+
+GLuint createBuoyTexture()
+{
+    const int w = 32, h = 32;
+    std::vector<unsigned char> data(w * h * 3);
+    for (int y = 0; y < h; ++y)
+    {
+        for (int x = 0; x < w; ++x)
+        {
+            bool stripe = ((x / 8) % 2) == 0;
+            int i = (y * w + x) * 3;
+            data[i + 0] = stripe ? 210 : 230;
+            data[i + 1] = stripe ? 80 : 190;
+            data[i + 2] = stripe ? 50 : 60;
+        }
+    }
+    return createTextureFromRGBData(data, w, h);
 }
 
 void setupShadowMap()
@@ -522,161 +669,26 @@ void setupShadowMap()
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void drawCube(GLuint shader, const glm::mat4& model, const glm::vec3& colour)
-{
-    glUseProgram(shader);
-    GLint colorLoc = glGetUniformLocation(shader, "objectColor");
-    if (colorLoc != -1)
-        setVec3(shader, "objectColor", colour);
-    setMat4(shader, "model", model);
-
-    glBindVertexArray(cubeVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-    glBindVertexArray(0);
-}
-
-void drawPlane(GLuint shader, const glm::mat4& model)
-{
-    glUseProgram(shader);
-    setMat4(shader, "model", model);
-
-    glBindVertexArray(planeVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    glBindVertexArray(0);
-}
-
-float randomRange(float minV, float maxV)
-{
-    return minV + static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * (maxV - minV);
-}
-
-void spawnParticle(const glm::vec3& pos, const glm::vec3& vel, const glm::vec4& color, float size, float life)
-{
-    if (particles.size() >= MAX_PARTICLES)
-        particles.erase(particles.begin());
-
-    particles.push_back({ pos, vel, color, size, life, life });
-}
-
-void emitWakeParticles()
-{
-    if (std::abs(boat.velocity) < 0.35f)
-        return;
-
-    float radians = glm::radians(boat.rotationY);
-    glm::vec3 forward(std::sin(radians), 0.0f, std::cos(radians));
-    glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
-    glm::vec3 basePos = boat.position - forward * 1.55f + glm::vec3(0.0f, 0.02f, 0.0f);
-
-    float speedFactor = glm::clamp(std::abs(boat.velocity) / std::max(0.1f, boat.maxForwardSpeed), 0.0f, 1.0f);
-    int count = 1 + static_cast<int>(speedFactor * 2.0f);
-
-    for (int i = 0; i < count; ++i)
-    {
-        float side = (i % 2 == 0) ? -1.0f : 1.0f;
-        glm::vec3 pos = basePos + right * side * randomRange(0.15f, 0.55f);
-        glm::vec3 vel = -forward * randomRange(0.5f, 1.6f) + right * side * randomRange(0.1f, 0.35f);
-        vel.y = randomRange(0.18f, 0.36f);
-        spawnParticle(pos, vel, glm::vec4(0.85f, 0.93f, 1.0f, 0.55f), randomRange(8.0f, 15.0f), randomRange(0.7f, 1.2f));
-    }
-}
-
-void emitSplashParticles(const glm::vec3& origin, int count, const glm::vec4& color, float sizeScale = 1.0f)
-{
-    for (int i = 0; i < count; ++i)
-    {
-        float angle = randomRange(0.0f, 6.28318f);
-        float radius = randomRange(0.05f, 0.75f);
-        glm::vec3 dir(std::cos(angle), 0.0f, std::sin(angle));
-        glm::vec3 pos = origin + dir * radius + glm::vec3(0.0f, 0.05f, 0.0f);
-        glm::vec3 vel = dir * randomRange(0.2f, 1.0f);
-        vel.y = randomRange(0.35f, 0.95f);
-        spawnParticle(pos, vel, color, randomRange(10.0f, 20.0f) * sizeScale, randomRange(0.6f, 1.1f));
-    }
-}
-
-void updateParticles(float dt)
-{
-    for (size_t i = 0; i < particles.size();)
-    {
-        Particle& p = particles[i];
-        p.life -= dt;
-        if (p.life <= 0.0f)
-        {
-            particles.erase(particles.begin() + static_cast<long long>(i));
-            continue;
-        }
-
-        p.velocity.y -= 1.35f * dt;
-        p.position += p.velocity * dt;
-        p.velocity *= (1.0f - 0.55f * dt);
-
-        float lifeT = glm::clamp(p.life / std::max(0.01f, p.maxLife), 0.0f, 1.0f);
-        p.color.a = lifeT * 0.6f;
-        ++i;
-    }
-}
-
-void renderParticles(const glm::mat4& view, const glm::mat4& projection)
-{
-    if (particles.empty())
-        return;
-
-    std::vector<ParticleVertex> verts;
-    verts.reserve(particles.size());
-    for (const auto& p : particles)
-        verts.push_back({ p.position, p.color, p.size });
-
-    glUseProgram(particleShader);
-    setMat4(particleShader, "view", view);
-    setMat4(particleShader, "projection", projection);
-
-    glBindBuffer(GL_ARRAY_BUFFER, particleVBO);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, verts.size() * sizeof(ParticleVertex), verts.data());
-
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE);
-
-    glBindVertexArray(particleVAO);
-    glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(verts.size()));
-    glBindVertexArray(0);
-
-    glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
-}
-
 void setupZones()
 {
-    std::vector<FishData> harbourFish = {
-        { "Sardine", FishRarity::Common, 5 },
-        { "Mackerel", FishRarity::Common, 6 },
-        { "Crab", FishRarity::Uncommon, 10 }
-    };
+    zones.push_back({ glm::vec3(12.0f, 0.0f, 10.0f), 6.5f,
+        { {"Sardine",0,5}, {"Mackerel",0,6}, {"Crab",1,11} },
+        glm::vec3(0.18f, 0.55f, 0.35f), glm::vec3(0.72f, 0.82f, 0.92f), 16.0f, 66.0f, 0.2f, "Harbour Waters" });
 
-    std::vector<FishData> reefFish = {
-        { "Snapper", FishRarity::Common, 8 },
-        { "Lionfish", FishRarity::Rare, 20 },
-        { "Eel", FishRarity::Rare, 25 }
-    };
+    zones.push_back({ glm::vec3(-18.0f, 0.0f, -10.0f), 8.5f,
+        { {"Snapper",0,8}, {"Lionfish",2,20}, {"Eel",2,25}, {"Grouper",1,13} },
+        glm::vec3(0.10f, 0.60f, 0.55f), glm::vec3(0.58f, 0.78f, 0.78f), 13.0f, 53.0f, 0.45f, "Reef Edge" });
 
-    std::vector<FishData> deepSeaFish = {
-        { "Anglerfish", FishRarity::Rare, 30 },
-        { "Oarfish", FishRarity::Legendary, 60 },
-        { "Ghost Fish", FishRarity::Legendary, 100 }
-    };
-
-    zones.push_back({ glm::vec3(15.0f, 0.0f, 10.0f), 6.2f, harbourFish, glm::vec3(0.22f, 0.72f, 0.36f), "Harbour Waters", 0.15f });
-    zones.push_back({ glm::vec3(-18.0f, 0.0f, -8.0f), 7.2f, reefFish, glm::vec3(0.15f, 0.65f, 0.55f), "Reef Edge", 0.35f });
-    zones.push_back({ glm::vec3(25.0f, 0.0f, -22.0f), 8.4f, deepSeaFish, glm::vec3(0.32f, 0.20f, 0.60f), "Deep Trench", 0.85f });
+    zones.push_back({ glm::vec3(23.0f, 0.0f, -23.0f), 10.0f,
+        { {"Anglerfish",2,30}, {"Oarfish",3,60}, {"Ghost Fish",3,100}, {"Black Cod",1,18} },
+        glm::vec3(0.35f, 0.18f, 0.55f), glm::vec3(0.36f, 0.42f, 0.58f), 9.0f, 36.0f, 0.8f, "Deep Trench" });
 }
 
 const FishZone* getCurrentZone()
 {
     for (const auto& zone : zones)
     {
-        if (zone.contains(boat.position))
-            return &zone;
+        if (zone.contains(boat.position)) return &zone;
     }
     return nullptr;
 }
@@ -690,462 +702,590 @@ std::string getCurrentZoneName()
 glm::vec3 getZoneWaterTint()
 {
     const FishZone* zone = getCurrentZone();
-    return zone ? zone->colour : glm::vec3(0.0f, 0.08f, 0.10f);
+    return zone ? zone->tint : glm::vec3(0.0f, 0.10f, 0.16f);
 }
 
-bool isAtDock()
+glm::vec3 getZoneFogColor()
 {
-    float distance = glm::length(glm::vec2(boat.position.x - dockCenter.x, boat.position.z - dockCenter.z));
-    return distance <= dockRadius && std::abs(boat.velocity) < 1.25f;
+    const FishZone* zone = getCurrentZone();
+    return zone ? zone->fogColor : glm::vec3(0.70f, 0.82f, 0.94f);
 }
 
-int getCargoValue()
+float getZoneFogNear()
 {
-    int total = 0;
-    for (const auto& fish : cargoHold)
-        total += fish.value;
-    return total;
+    const FishZone* zone = getCurrentZone();
+    return zone ? zone->fogNear : 18.0f;
 }
 
-int getRodUpgradeCost()
+float getZoneFogFar()
 {
-    return 20 + (rodLevel - 1) * 30;
+    const FishZone* zone = getCurrentZone();
+    return zone ? zone->fogFar : 72.0f;
 }
 
-int getEngineUpgradeCost()
+float getWorldDanger()
 {
-    return 25 + (engineLevel - 1) * 35;
-}
-
-int getCargoUpgradeCost()
-{
-    return 18 + (cargoLevel - 1) * 28;
-}
-
-void applyEngineUpgradeStats()
-{
-    boat.maxForwardSpeed = 7.0f + (engineLevel - 1) * 1.4f;
-    boat.maxBackwardSpeed = 3.5f + (engineLevel - 1) * 0.5f;
-    boat.acceleration = 4.5f + (engineLevel - 1) * 0.8f;
-}
-
-void setStatusMessage(const std::string& message, float duration = 2.2f)
-{
-    lastCatchText = message;
-    statusMessageTimer = duration;
-    std::cout << message << std::endl;
-}
-
-void sellCargo()
-{
-    if (!isAtDock())
-    {
-        setStatusMessage("Move closer to the dock and slow down to sell.");
-        return;
-    }
-
-    if (cargoHold.empty())
-    {
-        setStatusMessage("Cargo hold is empty.");
-        return;
-    }
-
-    int saleValue = getCargoValue();
-    totalMoney += saleValue;
-    cargoHold.clear();
-    emitSplashParticles(dockCenter + glm::vec3(0.0f, 0.15f, 0.0f), 18, glm::vec4(0.95f, 0.85f, 0.35f, 0.75f), 0.9f);
-
-    std::stringstream ss;
-    ss << "Sold all cargo for " << saleValue << " gold. Total gold: " << totalMoney;
-    setStatusMessage(ss.str(), 3.0f);
-}
-
-void buyRodUpgrade()
-{
-    int cost = getRodUpgradeCost();
-    if (!isAtDock())
-    {
-        setStatusMessage("Dock to buy upgrades.");
-        return;
-    }
-    if (totalMoney < cost)
-    {
-        std::stringstream ss;
-        ss << "Not enough gold for rod upgrade. Need " << cost << ".";
-        setStatusMessage(ss.str());
-        return;
-    }
-
-    totalMoney -= cost;
-    rodLevel++;
-    std::stringstream ss;
-    ss << "Rod upgraded to Lv " << rodLevel << ". Better odds for rare fish.";
-    setStatusMessage(ss.str(), 3.0f);
-}
-
-void buyEngineUpgrade()
-{
-    int cost = getEngineUpgradeCost();
-    if (!isAtDock())
-    {
-        setStatusMessage("Dock to buy upgrades.");
-        return;
-    }
-    if (totalMoney < cost)
-    {
-        std::stringstream ss;
-        ss << "Not enough gold for engine upgrade. Need " << cost << ".";
-        setStatusMessage(ss.str());
-        return;
-    }
-
-    totalMoney -= cost;
-    engineLevel++;
-    applyEngineUpgradeStats();
-    std::stringstream ss;
-    ss << "Engine upgraded to Lv " << engineLevel << ". Boat speed increased.";
-    setStatusMessage(ss.str(), 3.0f);
-}
-
-void buyCargoUpgrade()
-{
-    int cost = getCargoUpgradeCost();
-    if (!isAtDock())
-    {
-        setStatusMessage("Dock to buy upgrades.");
-        return;
-    }
-    if (totalMoney < cost)
-    {
-        std::stringstream ss;
-        ss << "Not enough gold for cargo upgrade. Need " << cost << ".";
-        setStatusMessage(ss.str());
-        return;
-    }
-
-    totalMoney -= cost;
-    cargoLevel++;
-    cargoCapacity += 2;
-    std::stringstream ss;
-    ss << "Cargo hold upgraded to Lv " << cargoLevel << ". Capacity is now " << cargoCapacity << ".";
-    setStatusMessage(ss.str(), 3.0f);
-}
-
-void tryFishing()
-{
-    if (fishCooldown > 0.0f)
-        return;
-
-    if (cargoHold.size() >= static_cast<size_t>(cargoCapacity))
-    {
-        setStatusMessage("Cargo hold full. Return to dock to sell.");
-        fishCooldown = 0.5f;
-        return;
-    }
-
-    fishCooldown = 1.0f;
-
-    for (const auto& zone : zones)
-    {
-        if (zone.contains(boat.position))
-        {
-            FishData fish = zone.catchFish(rodLevel);
-            cargoHold.push_back(fish);
-
-            std::stringstream ss;
-            if (fish.rarity == FishRarity::Legendary)
-            {
-                ss << "LEGENDARY CATCH! ";
-                catchFlashTimer = 0.6f;
-            }
-            else if (fish.rarity == FishRarity::Rare)
-            {
-                ss << "RARE CATCH! ";
-                catchFlashTimer = 0.3f;
-            }
-
-            ss << fish.name
-               << " | " << rarityToString(fish.rarity)
-               << " | Value: " << fish.value
-               << " | Cargo: " << cargoHold.size() << "/" << cargoCapacity;
-
-            emitSplashParticles(boat.position + glm::vec3(0.0f, 0.1f, 0.0f), 14, glm::vec4(0.88f, 0.95f, 1.0f, 0.7f));
-            setStatusMessage(ss.str());
-            return;
-        }
-    }
-
-    setStatusMessage("No fish here.");
+    const FishZone* zone = getCurrentZone();
+    return zone ? zone->danger : 0.1f;
 }
 
 glm::vec3 getCameraPosition()
 {
     float radians = glm::radians(boat.rotationY);
     glm::vec3 behind(-std::sin(radians), 0.0f, -std::cos(radians));
-    return boat.position + behind * 8.0f + glm::vec3(0.0f, 5.0f, 0.0f);
+    return boat.position + behind * 8.0f + glm::vec3(0.0f, 5.25f, 0.0f);
 }
 
-void drawIslandCluster(GLuint shader, const glm::vec3& pos, const glm::vec3& grassColor, bool stylisedPalms = true)
+bool isAtDock()
 {
-    glm::mat4 model = glm::mat4(1.0f);
-    model = glm::translate(model, pos + glm::vec3(0.0f, 0.30f, 0.0f));
-    model = glm::scale(model, glm::vec3(5.0f, 0.9f, 4.8f));
-    drawCube(shader, model, glm::vec3(0.27f, 0.24f, 0.22f));
+    return glm::length(glm::vec2(boat.position.x, boat.position.z)) < 5.5f;
+}
 
-    model = glm::mat4(1.0f);
-    model = glm::translate(model, pos + glm::vec3(0.8f, 0.95f, -0.3f));
-    model = glm::scale(model, glm::vec3(3.8f, 0.8f, 3.4f));
-    drawCube(shader, model, glm::vec3(0.34f, 0.31f, 0.28f));
+int getCargoValue()
+{
+    int total = 0;
+    for (const auto& item : cargo) total += item.fish.value;
+    return total;
+}
 
-    model = glm::mat4(1.0f);
-    model = glm::translate(model, pos + glm::vec3(-0.3f, 1.45f, 0.5f));
-    model = glm::scale(model, glm::vec3(2.8f, 0.45f, 2.6f));
-    drawCube(shader, model, grassColor);
+int rodUpgradeCost() { return 20 + (rodLevel - 1) * 15; }
+int engineUpgradeCost() { return 25 + (engineLevel - 1) * 20; }
+int cargoUpgradeCost() { return 18 + (cargoLevel - 1) * 14; }
 
-    if (stylisedPalms)
+void spawnParticle(const glm::vec3& pos, const glm::vec3& vel, const glm::vec4& color, float life, float size)
+{
+    for (auto& p : particles)
     {
-        for (int i = 0; i < 2; ++i)
+        if (p.life <= 0.0f)
         {
-            float offset = i == 0 ? -0.9f : 0.9f;
-            model = glm::mat4(1.0f);
-            model = glm::translate(model, pos + glm::vec3(offset, 2.0f, 0.2f * (i == 0 ? -1.0f : 1.0f)));
-            model = glm::scale(model, glm::vec3(0.16f, 1.7f, 0.16f));
-            drawCube(shader, model, glm::vec3(0.35f, 0.24f, 0.12f));
-
-            model = glm::mat4(1.0f);
-            model = glm::translate(model, pos + glm::vec3(offset, 2.95f, 0.0f));
-            model = glm::scale(model, glm::vec3(1.2f, 0.18f, 0.45f));
-            drawCube(shader, model, glm::vec3(0.18f, 0.52f, 0.20f));
-
-            model = glm::mat4(1.0f);
-            model = glm::translate(model, pos + glm::vec3(offset, 2.95f, 0.0f));
-            model = glm::rotate(model, glm::radians(90.0f), glm::vec3(0, 1, 0));
-            model = glm::scale(model, glm::vec3(1.2f, 0.18f, 0.45f));
-            drawCube(shader, model, glm::vec3(0.18f, 0.52f, 0.20f));
+            p.position = pos;
+            p.velocity = vel;
+            p.color = color;
+            p.life = life;
+            p.size = size;
+            return;
         }
     }
 }
 
-void drawDockStructures(GLuint shader)
+void spawnWakeParticles()
 {
-    glm::mat4 model = glm::mat4(1.0f);
-    model = glm::translate(model, glm::vec3(0.0f, 0.12f, 0.0f));
-    model = glm::scale(model, glm::vec3(5.0f, 0.18f, 3.0f));
-    drawCube(shader, model, glm::vec3(0.45f, 0.28f, 0.12f));
+    if (std::abs(boat.velocity) < 0.4f) return;
 
-    std::vector<glm::vec3> pylons = {
-        {-2.0f, -0.8f, -1.1f}, {2.0f, -0.8f, -1.1f}, {-2.0f, -0.8f, 1.1f}, {2.0f, -0.8f, 1.1f}
+    float radians = glm::radians(boat.rotationY);
+    glm::vec3 forward(std::sin(radians), 0.0f, std::cos(radians));
+    glm::vec3 side(forward.z, 0.0f, -forward.x);
+    glm::vec3 base = boat.position - forward * 1.8f + glm::vec3(0.0f, 0.02f, 0.0f);
+
+    for (int i = 0; i < 2; ++i)
+    {
+        float lateral = (i == 0 ? -0.45f : 0.45f);
+        glm::vec3 pos = base + side * lateral;
+        glm::vec3 vel = -forward * (0.6f + static_cast<float>(rand() % 40) * 0.01f) + glm::vec3(0.0f, 0.2f, 0.0f);
+        spawnParticle(pos, vel, glm::vec4(0.86f, 0.93f, 1.0f, 0.85f), 0.8f, 11.0f);
+    }
+}
+
+void spawnSplash(const glm::vec3& pos, const glm::vec4& color, int count)
+{
+    for (int i = 0; i < count; ++i)
+    {
+        glm::vec3 vel(
+            (static_cast<float>(rand() % 100) / 100.0f - 0.5f) * 1.2f,
+            0.6f + static_cast<float>(rand() % 100) / 140.0f,
+            (static_cast<float>(rand() % 100) / 100.0f - 0.5f) * 1.2f);
+        spawnParticle(pos, vel, color, 0.9f, 10.0f + static_cast<float>(rand() % 6));
+    }
+}
+
+void updateParticles(float dt)
+{
+    for (auto& p : particles)
+    {
+        if (p.life <= 0.0f) continue;
+        p.life -= dt;
+        if (p.life <= 0.0f) continue;
+        p.velocity += glm::vec3(0.0f, -1.8f, 0.0f) * dt;
+        p.position += p.velocity * dt;
+        p.color.a = glm::clamp(p.life, 0.0f, 1.0f);
+    }
+}
+
+FishData catchFishFromZone(const FishZone& zone)
+{
+    int roll = rand() % 100;
+    roll -= (rodLevel - 1) * 6;
+
+    std::vector<FishData> common, uncommon, rare, legendary;
+    for (const auto& fish : zone.fishPool)
+    {
+        if (fish.rarity == 0) common.push_back(fish);
+        else if (fish.rarity == 1) uncommon.push_back(fish);
+        else if (fish.rarity == 2) rare.push_back(fish);
+        else legendary.push_back(fish);
+    }
+
+    if (roll < 48 && !common.empty()) return common[rand() % common.size()];
+    if (roll < 78 && !uncommon.empty()) return uncommon[rand() % uncommon.size()];
+    if (roll < 95 && !rare.empty()) return rare[rand() % rare.size()];
+    if (!legendary.empty()) return legendary[rand() % legendary.size()];
+    return zone.fishPool[rand() % zone.fishPool.size()];
+}
+
+void tryFishing(GLFWwindow* window)
+{
+    if (fishCooldown > 0.0f) return;
+    fishCooldown = 1.0f;
+
+    const FishZone* zone = getCurrentZone();
+    if (!zone)
+    {
+        lastCatchText = "No fish here";
+        catchMessageTimer = 2.0f;
+        std::cout << "[Fish] " << lastCatchText << std::endl;
+        glfwSetWindowTitle(window, lastCatchText.c_str());
+        return;
+    }
+
+    if (static_cast<int>(cargo.size()) >= cargoCapacity)
+    {
+        lastCatchText = "Cargo full - return to dock to sell";
+        catchMessageTimer = 2.5f;
+        std::cout << "[Fish] " << lastCatchText << std::endl;
+        glfwSetWindowTitle(window, lastCatchText.c_str());
+        return;
+    }
+
+    FishData fish = catchFishFromZone(*zone);
+    cargo.push_back({ fish });
+
+    std::stringstream ss;
+    if (fish.rarity == 3) { ss << "LEGENDARY CATCH! "; catchFlashTimer = 0.7f; }
+    else if (fish.rarity == 2) { ss << "RARE CATCH! "; catchFlashTimer = 0.35f; }
+    else if (fish.rarity == 1) { ss << "UNCOMMON CATCH! "; }
+
+    ss << fish.name
+       << " | Value: " << fish.value << "g"
+       << " | Cargo: " << cargo.size() << "/" << cargoCapacity;
+
+    lastCatchText = ss.str();
+    catchMessageTimer = 3.0f;
+
+    std::cout << "[Catch] " << fish.name
+              << " | Rarity: " << fish.rarity
+              << " | Value: " << fish.value << "g"
+              << " | Cargo: " << cargo.size() << "/" << cargoCapacity
+              << std::endl;
+
+    glfwSetWindowTitle(window, lastCatchText.c_str());
+
+    spawnSplash(boat.position + glm::vec3(0.0f, 0.1f, 1.8f), glm::vec4(0.82f, 0.94f, 1.0f, 0.85f), 12);
+}
+
+void sellCargo()
+{
+    if (!isAtDock() || cargo.empty()) return;
+    int soldValue = getCargoValue();
+    totalMoney += soldValue;
+    cargo.clear();
+    lastCatchText = "Sold cargo for " + std::to_string(soldValue) + "g";
+    catchMessageTimer = 2.5f;
+    std::cout << "[Dock] " << lastCatchText << " | Gold: " << totalMoney << std::endl;
+    spawnSplash(glm::vec3(0.0f, 0.3f, 1.2f), glm::vec4(1.0f, 0.86f, 0.35f, 1.0f), 18);
+}
+
+void buyRodUpgrade()
+{
+    int cost = rodUpgradeCost();
+    if (!isAtDock() || totalMoney < cost) return;
+    totalMoney -= cost;
+    rodLevel++;
+    lastCatchText = "Bought rod upgrade for " + std::to_string(cost) + "g";
+    catchMessageTimer = 2.5f;
+    std::cout << "[Dock] " << lastCatchText << " | Rod: " << rodLevel << std::endl;
+}
+
+void buyEngineUpgrade()
+{
+    int cost = engineUpgradeCost();
+    if (!isAtDock() || totalMoney < cost) return;
+    totalMoney -= cost;
+    engineLevel++;
+    boat.maxForwardSpeed += 1.2f;
+    boat.acceleration += 0.35f;
+    lastCatchText = "Bought engine upgrade for " + std::to_string(cost) + "g";
+    catchMessageTimer = 2.5f;
+    std::cout << "[Dock] " << lastCatchText << " | Engine: " << engineLevel << std::endl;
+}
+
+void buyCargoUpgrade()
+{
+    int cost = cargoUpgradeCost();
+    if (!isAtDock() || totalMoney < cost) return;
+    totalMoney -= cost;
+    cargoLevel++;
+    cargoCapacity += 2;
+    lastCatchText = "Bought cargo upgrade for " + std::to_string(cost) + "g";
+    catchMessageTimer = 2.5f;
+    std::cout << "[Dock] " << lastCatchText << " | Capacity: " << cargoCapacity << std::endl;
+}
+
+void bindMaterial(GLuint shader, GLuint textureID, int materialType, float tiling)
+{
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, textureID);
+    setInt(shader, "materialTex", 0);
+    setInt(shader, "materialType", materialType);
+    setFloat(shader, "uvTiling", tiling);
+}
+
+void drawCube(GLuint shader, const glm::mat4& model)
+{
+    setMat4(shader, "model", model);
+    glBindVertexArray(cubeVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+}
+
+void drawPlane(GLuint shader, const glm::mat4& model)
+{
+    setMat4(shader, "model", model);
+    glBindVertexArray(planeVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+}
+
+void drawModel(GLuint shader, const ModelMesh& modelMesh, const glm::mat4& model)
+{
+    if (!modelMesh.loaded)
+        return;
+
+    setMat4(shader, "model", model);
+    glBindVertexArray(modelMesh.vao);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(modelMesh.vertexCount));
+    glBindVertexArray(0);
+}
+
+void renderWorldGeometry(GLuint shader, bool depthPass, float time)
+{
+    auto setMat = [&](GLuint tex, int type, float tiling)
+    {
+        if (!depthPass) bindMaterial(shader, tex, type, tiling);
     };
-    for (const auto& p : pylons)
+
+    // Dock base
     {
-        model = glm::mat4(1.0f);
-        model = glm::translate(model, p);
-        model = glm::scale(model, glm::vec3(0.22f, 1.8f, 0.22f));
-        drawCube(shader, model, glm::vec3(0.23f, 0.16f, 0.08f));
-    }
+        setMat(woodTex, MAT_WOOD, 3.0f);
+        glm::mat4 model(1.0f);
+        model = glm::translate(model, glm::vec3(0.0f, 0.28f, 0.0f));
+        model = glm::scale(model, glm::vec3(5.0f, 0.22f, 3.0f));
+        drawCube(shader, model);
 
-    model = glm::mat4(1.0f);
-    model = glm::translate(model, glm::vec3(2.6f, 0.65f, 0.0f));
-    model = glm::scale(model, glm::vec3(1.8f, 0.8f, 1.6f));
-    drawCube(shader, model, glm::vec3(0.52f, 0.38f, 0.22f));
-
-    model = glm::mat4(1.0f);
-    model = glm::translate(model, glm::vec3(2.6f, 1.35f, 0.0f));
-    model = glm::scale(model, glm::vec3(2.2f, 0.2f, 2.0f));
-    drawCube(shader, model, glm::vec3(0.28f, 0.16f, 0.12f));
-
-    model = glm::mat4(1.0f);
-    model = glm::translate(model, glm::vec3(-1.6f, 0.45f, 0.85f));
-    model = glm::scale(model, glm::vec3(0.7f, 0.7f, 0.7f));
-    drawCube(shader, model, glm::vec3(0.58f, 0.38f, 0.18f));
-
-    model = glm::mat4(1.0f);
-    model = glm::translate(model, glm::vec3(-1.0f, 0.4f, -0.85f));
-    model = glm::scale(model, glm::vec3(0.6f, 0.6f, 0.6f));
-    drawCube(shader, model, glm::vec3(0.52f, 0.32f, 0.15f));
-}
-
-void drawBoat(GLuint shader, float time)
-{
-    float boatBob = std::sin(time * 2.5f) * 0.08f;
-    float tilt = boat.velocity * 0.8f;
-
-    glm::mat4 model = glm::mat4(1.0f);
-    model = glm::translate(model, boat.position + glm::vec3(0.0f, boatBob, 0.0f));
-    model = glm::rotate(model, glm::radians(boat.rotationY), glm::vec3(0.0f, 1.0f, 0.0f));
-    model = glm::rotate(model, glm::radians(tilt), glm::vec3(0.0f, 0.0f, 1.0f));
-    model = glm::scale(model, glm::vec3(1.4f, 0.45f, 2.5f));
-    drawCube(shader, model, glm::vec3(0.45f, 0.18f, 0.12f));
-
-    model = glm::mat4(1.0f);
-    model = glm::translate(model, boat.position + glm::vec3(0.0f, 0.42f + boatBob, -0.10f));
-    model = glm::rotate(model, glm::radians(boat.rotationY), glm::vec3(0.0f, 1.0f, 0.0f));
-    model = glm::rotate(model, glm::radians(tilt), glm::vec3(0.0f, 0.0f, 1.0f));
-    model = glm::scale(model, glm::vec3(0.85f, 0.55f, 1.0f));
-    drawCube(shader, model, glm::vec3(0.82f, 0.82f, 0.78f));
-
-    model = glm::mat4(1.0f);
-    model = glm::translate(model, boat.position + glm::vec3(0.0f, 1.1f + boatBob, 0.0f));
-    model = glm::rotate(model, glm::radians(boat.rotationY), glm::vec3(0.0f, 1.0f, 0.0f));
-    model = glm::rotate(model, glm::radians(tilt), glm::vec3(0.0f, 0.0f, 1.0f));
-    model = glm::scale(model, glm::vec3(0.08f, 1.6f, 0.08f));
-    drawCube(shader, model, glm::vec3(0.35f, 0.2f, 0.1f));
-
-    int visibleCrates = static_cast<int>(cargoHold.size());
-    visibleCrates = std::min(visibleCrates, 6);
-    for (int i = 0; i < visibleCrates; ++i)
-    {
-        float localX = -0.35f + (i % 3) * 0.35f;
-        float localZ = 0.35f + (i / 3) * 0.35f;
-        model = glm::mat4(1.0f);
-        model = glm::translate(model, boat.position + glm::vec3(0.0f, 0.42f + boatBob, 0.0f));
-        model = glm::rotate(model, glm::radians(boat.rotationY), glm::vec3(0.0f, 1.0f, 0.0f));
-        model = glm::rotate(model, glm::radians(tilt), glm::vec3(0.0f, 0.0f, 1.0f));
-        model = glm::translate(model, glm::vec3(localX, 0.15f, localZ));
-        model = glm::scale(model, glm::vec3(0.22f, 0.22f, 0.22f));
-        drawCube(shader, model, glm::vec3(0.55f, 0.38f, 0.20f));
-    }
-}
-
-void drawWorldGeometry(GLuint shader, float time, bool includeMarkers)
-{
-    drawDockStructures(shader);
-
-    drawIslandCluster(shader, glm::vec3(15.0f, 0.0f, 10.0f), glm::vec3(0.34f, 0.56f, 0.26f));
-    drawIslandCluster(shader, glm::vec3(-18.0f, 0.0f, -8.0f), glm::vec3(0.28f, 0.52f, 0.24f));
-    drawIslandCluster(shader, glm::vec3(25.0f, 0.0f, -22.0f), glm::vec3(0.24f, 0.44f, 0.20f));
-    drawIslandCluster(shader, glm::vec3(-10.0f, 0.0f, 18.0f), glm::vec3(0.36f, 0.58f, 0.28f), false);
-
-    if (includeMarkers)
-    {
-        for (const auto& zone : zones)
+        for (int x = -1; x <= 1; ++x)
         {
-            float pulse = 1.0f + std::sin(time * 2.0f + zone.center.x) * 0.08f;
-            glm::mat4 buoy = glm::mat4(1.0f);
-            buoy = glm::translate(buoy, zone.center + glm::vec3(0.0f, 0.55f, 0.0f));
-            buoy = glm::scale(buoy, glm::vec3(0.35f * pulse, 0.9f, 0.35f * pulse));
-            drawCube(shader, buoy, zone.colour);
-
-            glm::mat4 pole = glm::mat4(1.0f);
-            pole = glm::translate(pole, zone.center + glm::vec3(0.0f, 1.15f, 0.0f));
-            pole = glm::scale(pole, glm::vec3(0.06f, 0.7f, 0.06f));
-            drawCube(shader, pole, glm::vec3(0.25f, 0.18f, 0.10f));
+            for (int z = -1; z <= 1; z += 2)
+            {
+                glm::mat4 post(1.0f);
+                post = glm::translate(post, glm::vec3(static_cast<float>(x) * 1.5f, -0.72f, static_cast<float>(z) * 1.0f));
+                post = glm::scale(post, glm::vec3(0.22f, 2.0f, 0.22f));
+                drawCube(shader, post);
+            }
         }
     }
 
-    drawBoat(shader, time);
+    // Dock shed
+    {
+        setMat(woodTex, MAT_WOOD, 2.0f);
+        glm::mat4 base(1.0f);
+        base = glm::translate(base, glm::vec3(-1.2f, 0.91f, 0.0f));
+        base = glm::scale(base, glm::vec3(1.4f, 1.0f, 1.2f));
+        drawCube(shader, base);
+
+        glm::mat4 roof(1.0f);
+        roof = glm::translate(roof, glm::vec3(-1.2f, 1.71f, 0.0f));
+        roof = glm::rotate(roof, glm::radians(25.0f), glm::vec3(0, 0, 1));
+        roof = glm::scale(roof, glm::vec3(1.9f, 0.16f, 1.5f));
+        drawCube(shader, roof);
+    }
+
+    // Crates at dock
+    {
+        setMat(woodTex, MAT_WOOD, 1.5f);
+
+        glm::mat4 crate1(1.0f);
+        crate1 = glm::translate(crate1, glm::vec3(1.55f, 0.49f, -0.55f));
+        crate1 = glm::scale(crate1, glm::vec3(0.24f, 0.24f, 0.24f));
+        drawCube(shader, crate1);
+
+        glm::mat4 crate2(1.0f);
+        crate2 = glm::translate(crate2, glm::vec3(1.88f, 0.49f, -0.34f));
+        crate2 = glm::scale(crate2, glm::vec3(0.20f, 0.20f, 0.20f));
+        drawCube(shader, crate2);
+
+        glm::mat4 crate3(1.0f);
+        crate3 = glm::translate(crate3, glm::vec3(2.10f, 0.49f, -0.58f));
+        crate3 = glm::scale(crate3, glm::vec3(0.18f, 0.18f, 0.18f));
+        drawCube(shader, crate3);
+    }
+
+    // Islands layered
+    std::vector<glm::vec3> islandPositions = {
+        glm::vec3(12.0f, 0.35f, 10.0f),
+        glm::vec3(-18.0f, 0.35f, -10.0f),
+        glm::vec3(23.0f, 0.35f, -23.0f),
+        glm::vec3(-10.0f, 0.35f, 18.0f)
+    };
+
+    for (size_t i = 0; i < islandPositions.size(); ++i)
+    {
+        glm::vec3 pos = islandPositions[i];
+        setMat(rockTex, MAT_ROCK, 2.7f);
+        for (int layer = 0; layer < 3; ++layer)
+        {
+            glm::mat4 rock(1.0f);
+            rock = glm::translate(rock, pos + glm::vec3(0.25f * layer, layer * 0.35f, -0.15f * layer));
+            rock = glm::scale(rock, glm::vec3(4.4f - layer * 0.9f, 0.9f, 4.0f - layer * 0.7f));
+            drawCube(shader, rock);
+        }
+
+        setMat(grassTex, MAT_GRASS, 3.0f);
+        glm::mat4 grass(1.0f);
+        grass = glm::translate(grass, pos + glm::vec3(0.1f, 1.15f, 0.0f));
+        grass = glm::scale(grass, glm::vec3(2.9f, 0.32f, 2.5f));
+        drawCube(shader, grass);
+
+        // simple palms/masts
+        setMat(woodTex, MAT_WOOD, 1.0f);
+        for (int trunk = 0; trunk < 2; ++trunk)
+        {
+            glm::mat4 t(1.0f);
+            float xoff = trunk == 0 ? -0.6f : 0.65f;
+            float zoff = trunk == 0 ? 0.55f : -0.5f;
+            t = glm::translate(t, pos + glm::vec3(xoff, 2.1f, zoff));
+            t = glm::rotate(t, glm::radians(trunk == 0 ? 8.0f : -10.0f), glm::vec3(0, 0, 1));
+            t = glm::scale(t, glm::vec3(0.18f, 2.1f, 0.18f));
+            drawCube(shader, t);
+
+            setMat(grassTex, MAT_GRASS, 1.0f);
+            glm::mat4 leaf(1.0f);
+            leaf = glm::translate(leaf, pos + glm::vec3(xoff, 3.1f, zoff));
+            leaf = glm::rotate(leaf, glm::radians(22.0f + trunk * 18.0f), glm::vec3(0, 1, 0));
+            leaf = glm::scale(leaf, glm::vec3(1.25f, 0.12f, 0.34f));
+            drawCube(shader, leaf);
+        }
+    }
+
+    // Zone buoys
+    for (const auto& zone : zones)
+    {
+        float pulse = 1.0f + std::sin(time * 2.1f + zone.center.x) * 0.05f;
+        setMat(buoyTex, MAT_BUOY, 1.0f);
+        glm::mat4 buoy(1.0f);
+        buoy = glm::translate(buoy, zone.center + glm::vec3(0.0f, 0.7f + std::sin(time * 1.4f + zone.center.z) * 0.08f, 0.0f));
+        buoy = glm::scale(buoy, glm::vec3(0.4f * pulse, 1.2f * pulse, 0.4f * pulse));
+        drawCube(shader, buoy);
+
+        setMat(woodTex, MAT_WOOD, 1.0f);
+        glm::mat4 mast(1.0f);
+        mast = glm::translate(mast, zone.center + glm::vec3(0.0f, 1.75f, 0.0f));
+        mast = glm::scale(mast, glm::vec3(0.08f, 1.2f, 0.08f));
+        drawCube(shader, mast);
+    }
+
+    float centerH = getWaterHeight(boat.position.x, boat.position.z, time);
+    float frontH  = getWaterHeight(boat.position.x, boat.position.z + 0.75f, time);
+    float backH   = getWaterHeight(boat.position.x, boat.position.z - 0.75f, time);
+    float leftH   = getWaterHeight(boat.position.x - 0.45f, boat.position.z, time);
+    float rightH  = getWaterHeight(boat.position.x + 0.45f, boat.position.z, time);
+
+    float targetPitch = std::atan2(frontH - backH, 1.5f);
+    float targetRoll  = std::atan2(rightH - leftH, 0.9f);
+
+    // make the boat feel heavier than the water
+    targetPitch *= 0.10f;
+    targetRoll  *= 0.10f;
+
+    // keep only a very small movement-based lean
+    float movementRoll = glm::radians(boat.velocity * 0.15f);
+
+    // smooth the visual motion so the boat sits on the water rather than snapping to every wave
+    boatVisualY     = glm::mix(boatVisualY, centerH + 0.08f, 0.02f);
+    boatVisualPitch = glm::mix(boatVisualPitch, targetPitch, 0.04f);
+    boatVisualRoll  = glm::mix(boatVisualRoll, -targetRoll + movementRoll, 0.04f);
+
+    glm::mat4 boatBase(1.0f);
+    boatBase = glm::translate(boatBase, glm::vec3(boat.position.x, boatVisualY, boat.position.z));
+    boatBase = glm::rotate(boatBase, glm::radians(boat.rotationY), glm::vec3(0, 1, 0));
+    boatBase = glm::rotate(boatBase, boatVisualPitch, glm::vec3(1, 0, 0));
+    boatBase = glm::rotate(boatBase, boatVisualRoll, glm::vec3(0, 0, 1));
+
+    if (boatModel.loaded)
+    {
+        setMat(boatTex, MAT_BOAT, 1.0f);
+
+        glm::mat4 boatModelMatrix = boatBase;
+        boatModelMatrix = glm::translate(boatModelMatrix, glm::vec3(0.0f, -0.06f, 0.0f));
+        boatModelMatrix = glm::rotate(boatModelMatrix, glm::radians(180.0f), glm::vec3(0, 1, 0));
+        boatModelMatrix = glm::scale(boatModelMatrix, glm::vec3(0.40f, 0.40f, 0.40f));
+
+        drawModel(shader, boatModel, boatModelMatrix);
+    }
+    else
+    {
+        setMat(boatTex, MAT_BOAT, 1.6f);
+        glm::mat4 hull = glm::scale(boatBase, glm::vec3(1.25f, 0.4f, 2.35f));
+        drawCube(shader, hull);
+
+        setMat(woodTex, MAT_WOOD, 1.3f);
+        glm::mat4 cabin = glm::translate(boatBase, glm::vec3(0.0f, 0.48f, -0.1f));
+        cabin = glm::scale(cabin, glm::vec3(0.8f, 0.55f, 0.95f));
+        drawCube(shader, cabin);
+
+        glm::mat4 mast = glm::translate(boatBase, glm::vec3(0.0f, 1.18f, 0.0f));
+        mast = glm::scale(mast, glm::vec3(0.09f, 1.7f, 0.09f));
+        drawCube(shader, mast);
+    }
+
+    // Cargo crates on boat
+    int shownCrates = std::min(static_cast<int>(cargo.size()), 4);
+    for (int i = 0; i < shownCrates; ++i)
+    {
+        setMat(woodTex, MAT_WOOD, 1.0f);
+        glm::mat4 crate = boatBase;
+
+        float xoff = 0.0f;
+        float zoff = 0.0f;
+        float yoff = 0.52f;
+
+        switch (i)
+        {
+        case 0:
+            xoff = -0.10f; zoff = -0.10f;
+            break;
+        case 1:
+            xoff = 0.10f; zoff = -0.10f;
+            break;
+        case 2:
+            xoff = -0.10f; zoff = 0.08f;
+            break;
+        case 3:
+            xoff = 0.10f; zoff = 0.08f;
+            break;
+        }
+
+        crate = glm::translate(crate, glm::vec3(xoff, yoff, zoff));
+        crate = glm::scale(crate, glm::vec3(0.08f, 0.08f, 0.08f));
+        drawCube(shader, crate);
+    } 
 }
 
-void renderScene(const glm::mat4& view, const glm::mat4& projection, float time)
+void renderDepthPass(const glm::mat4& lightSpaceMatrix, float time)
 {
-    glm::vec3 cameraPos = getCameraPosition();
-    glm::vec3 lightPos(24.0f, 28.0f, 12.0f);
-    glm::mat4 lightProjection = glm::ortho(-65.0f, 65.0f, -65.0f, 65.0f, 1.0f, 90.0f);
-    glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    glm::mat4 lightSpaceMatrix = lightProjection * lightView;
-
     glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFBO);
     glClear(GL_DEPTH_BUFFER_BIT);
     glUseProgram(depthShader);
     setMat4(depthShader, "lightSpaceMatrix", lightSpaceMatrix);
-    drawWorldGeometry(depthShader, time, false);
+    renderWorldGeometry(depthShader, true, time);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
 
-    glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+void renderSkybox(const glm::mat4& view, const glm::mat4& projection)
+{
+    glDepthFunc(GL_LEQUAL);
+    glUseProgram(skyboxShader);
+    glm::mat4 skyView = glm::mat4(glm::mat3(view));
+    setMat4(skyboxShader, "view", skyView);
+    setMat4(skyboxShader, "projection", projection);
+    glBindVertexArray(skyboxVAO);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxCubemap);
+    setInt(skyboxShader, "skybox", 0);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    glBindVertexArray(0);
+    glDepthFunc(GL_LESS);
+}
 
-    glm::vec3 fogColor = getCurrentFogColor();
-    float fogDensity = getCurrentFogDensity();
-
+void renderWater(const glm::mat4& view, const glm::mat4& projection, const glm::mat4& lightSpaceMatrix, const glm::vec3& lightPos, const glm::vec3& viewPos, float time)
+{
     glUseProgram(waterShader);
     setMat4(waterShader, "view", view);
     setMat4(waterShader, "projection", projection);
     setMat4(waterShader, "lightSpaceMatrix", lightSpaceMatrix);
     setVec3(waterShader, "lightPos", lightPos);
-    setVec3(waterShader, "viewPos", cameraPos);
+    setVec3(waterShader, "viewPos", viewPos);
     setVec3(waterShader, "zoneTint", getZoneWaterTint());
-    setVec3(waterShader, "fogColor", fogColor);
-    setFloat(waterShader, "fogDensity", fogDensity);
+    setVec3(waterShader, "fogColor", getZoneFogColor());
+    setFloat(waterShader, "fogNear", getZoneFogNear());
+    setFloat(waterShader, "fogFar", getZoneFogFar());
+    setFloat(waterShader, "worldDanger", getWorldDanger());
     setFloat(waterShader, "time", time);
-    setFloat(waterShader, "waveStrength", 1.0f + worldDanger * 0.55f);
-    setFloat(waterShader, "worldDanger", worldDanger);
-    glActiveTexture(GL_TEXTURE0);
+    glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, shadowMap);
-    setInt(waterShader, "shadowMap", 0);
-    glm::mat4 waterModel = glm::mat4(1.0f);
+    setInt(waterShader, "shadowMap", 1);
+
+    glm::mat4 waterModel(1.0f);
     waterModel = glm::scale(waterModel, glm::vec3(120.0f, 1.0f, 120.0f));
     drawPlane(waterShader, waterModel);
+}
 
+void renderLitScene(const glm::mat4& view, const glm::mat4& projection, const glm::mat4& lightSpaceMatrix, const glm::vec3& lightPos, const glm::vec3& viewPos, float time)
+{
     glUseProgram(basicShader);
     setMat4(basicShader, "view", view);
     setMat4(basicShader, "projection", projection);
     setMat4(basicShader, "lightSpaceMatrix", lightSpaceMatrix);
     setVec3(basicShader, "lightPos", lightPos);
-    setVec3(basicShader, "viewPos", cameraPos);
-    setVec3(basicShader, "fogColor", fogColor);
-    setFloat(basicShader, "fogDensity", fogDensity);
-    setFloat(basicShader, "worldDanger", worldDanger);
-    glActiveTexture(GL_TEXTURE0);
+    setVec3(basicShader, "viewPos", viewPos);
+    setVec3(basicShader, "fogColor", getZoneFogColor());
+    setFloat(basicShader, "fogNear", getZoneFogNear());
+    setFloat(basicShader, "fogFar", getZoneFogFar());
+    setFloat(basicShader, "worldDanger", getWorldDanger());
+
+    glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, shadowMap);
-    setInt(basicShader, "shadowMap", 0);
-    drawWorldGeometry(basicShader, time, true);
+    setInt(basicShader, "shadowMap", 1);
 
-
-    renderParticles(view, projection);
+    renderWorldGeometry(basicShader, false, time);
 }
 
-
-std::string buildWindowTitle()
+void renderParticles(const glm::mat4& view, const glm::mat4& projection)
 {
-    std::stringstream title;
-    title << "Dredge-style Fishing Prototype"
-          << " | Zone: " << getCurrentZoneName()
-          << " | Gold: " << totalMoney
-          << " | Cargo: " << cargoHold.size() << "/" << cargoCapacity << " (" << getCargoValue() << "g)"
-          << " | Rod " << rodLevel
-          << " | Engine " << engineLevel
-          << " | Dock: ";
-
-    if (isAtDock())
+    std::vector<ParticleVertex> alive;
+    alive.reserve(MAX_PARTICLES);
+    for (const auto& p : particles)
     {
-        title << "Sell[R]  Rod[1:" << getRodUpgradeCost() << "g]"
-              << "  Engine[2:" << getEngineUpgradeCost() << "g]"
-              << "  Cargo[3:" << getCargoUpgradeCost() << "g]";
+        if (p.life > 0.0f)
+            alive.push_back({ p.position, p.color, p.size });
     }
-    else
-    {
-        title << "Return to dock";
-    }
+    if (alive.empty()) return;
 
-    if (statusMessageTimer > 0.0f)
-        title << " | " << lastCatchText;
-    else
-        title << " | Fish[E]";
+    glUseProgram(particleShader);
+    setMat4(particleShader, "view", view);
+    setMat4(particleShader, "projection", projection);
+    glBindBuffer(GL_ARRAY_BUFFER, particleVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, alive.size() * sizeof(ParticleVertex), alive.data());
 
-    return title.str();
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glBindVertexArray(particleVAO);
+    glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(alive.size()));
+    glBindVertexArray(0);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
 }
 
-// ------------------------------------------------------------
-// Main
-// ------------------------------------------------------------
 int main()
 {
     srand(static_cast<unsigned int>(time(nullptr)));
 
-    if (!glfwInit())
-    {
-        std::cerr << "Failed to initialise GLFW" << std::endl;
-        return -1;
-    }
-
+    if (!glfwInit()) return -1;
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Fishing Game CW2 Template", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Dredge-style Fishing Prototype", nullptr, nullptr);
     if (!window)
     {
-        std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
         return -1;
     }
@@ -1156,7 +1296,6 @@ int main()
 
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
     {
-        std::cerr << "Failed to initialise GLAD" << std::endl;
         glfwTerminate();
         return -1;
     }
@@ -1165,24 +1304,38 @@ int main()
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_PROGRAM_POINT_SIZE);
 
-    basicShader = createShaderProgram(BASIC_VERT_PATH, BASIC_FRAG_PATH);
-    waterShader = createShaderProgram(WATER_VERT_PATH, WATER_FRAG_PATH);
-    depthShader = createShaderProgram(DEPTH_VERT_PATH, DEPTH_FRAG_PATH);
-    particleShader = createShaderProgram(PARTICLE_VERT_PATH, PARTICLE_FRAG_PATH);
-
-    if (basicShader == 0 || waterShader == 0 || depthShader == 0 || particleShader == 0)
-    {
-        std::cerr << "One or more shaders failed to load. Check your shader file paths and compile errors above." << std::endl;
-        glfwTerminate();
-        return -1;
-    }
+    basicShader = createShaderProgramFromFiles(BASIC_VERT_PATH, BASIC_FRAG_PATH);
+    waterShader = createShaderProgramFromFiles(WATER_VERT_PATH, WATER_FRAG_PATH);
+    depthShader = createShaderProgramFromFiles(DEPTH_VERT_PATH, DEPTH_FRAG_PATH);
+    particleShader = createShaderProgramFromFiles(PARTICLE_VERT_PATH, PARTICLE_FRAG_PATH);
+    skyboxShader = createShaderProgramFromFiles(SKYBOX_VERT_PATH, SKYBOX_FRAG_PATH);
+    InitUIOverlay();
 
     setupCube();
     setupPlane();
-    setupParticleSystem();
+    setupSkybox();
+    setupParticles();
     setupShadowMap();
     setupZones();
-    applyEngineUpgradeStats();
+
+    loadOBJModel("media/models/boat.obj", boatModel);
+
+    woodTex = loadTextureFromFile("media/wood.jpg");
+    if (woodTex == 0) woodTex = createWoodTexture();
+
+    rockTex = loadTextureFromFile("media/rock.jpg");
+    if (rockTex == 0) rockTex = createRockTexture();
+
+    grassTex = loadTextureFromFile("media/grass.jpg");
+    if (grassTex == 0) grassTex = createGrassTexture();
+
+    boatTex = loadTextureFromFile("textures/boat.jpg");
+    if (boatTex == 0) boatTex = createBoatTexture();
+
+    buoyTex = loadTextureFromFile("textures/buoy.jpg");
+    if (buoyTex == 0) buoyTex = createBuoyTexture();
+
+    skyboxCubemap = LoadSkyboxCubemapOrFallback("media/skybox/");
 
     float lastFrame = 0.0f;
 
@@ -1195,87 +1348,113 @@ int main()
         glfwPollEvents();
         boat.update(deltaTime);
 
-        if (fishCooldown > 0.0f)
-            fishCooldown -= deltaTime;
-        if (statusMessageTimer > 0.0f)
-            statusMessageTimer -= deltaTime;
-        if (catchFlashTimer > 0.0f)
-            catchFlashTimer -= deltaTime;
+        if (fishCooldown > 0.0f) fishCooldown -= deltaTime;
+        if (catchFlashTimer > 0.0f) catchFlashTimer -= deltaTime;
+        if (catchMessageTimer > 0.0f) catchMessageTimer -= deltaTime;
 
-        const FishZone* currentZone = getCurrentZone();
-        worldDanger = currentZone ? currentZone->danger : 0.0f;
-        emitWakeParticles();
+        spawnWakeParticles();
         updateParticles(deltaTime);
 
-        if (keys[GLFW_KEY_E] && !fishPressed)
+        if (keys[GLFW_KEY_E] && !fishPressed) { tryFishing(window); fishPressed = true; }
+        if (!keys[GLFW_KEY_E]) fishPressed = false;
+
+        if (keys[GLFW_KEY_R] && !sellPressed) { sellCargo(); sellPressed = true; }
+        if (!keys[GLFW_KEY_R]) sellPressed = false;
+
+        if (keys[GLFW_KEY_1] && !upgrade1Pressed) { buyRodUpgrade(); upgrade1Pressed = true; }
+        if (!keys[GLFW_KEY_1]) upgrade1Pressed = false;
+
+        if (keys[GLFW_KEY_2] && !upgrade2Pressed) { buyEngineUpgrade(); upgrade2Pressed = true; }
+        if (!keys[GLFW_KEY_2]) upgrade2Pressed = false;
+
+        if (keys[GLFW_KEY_3] && !upgrade3Pressed) { buyCargoUpgrade(); upgrade3Pressed = true; }
+        if (!keys[GLFW_KEY_3]) upgrade3Pressed = false;
+
+        std::stringstream title;
+        title << "Dredge-style Fishing Prototype | Zone: " << getCurrentZoneName()
+              << " | Gold: " << totalMoney
+              << " | Cargo: " << cargo.size() << "/" << cargoCapacity << " (" << getCargoValue() << "g)"
+              << " | Rod: " << rodLevel
+              << " | Speed: " << std::fixed << std::setprecision(1) << boat.velocity;
+        if (isAtDock())
         {
-            tryFishing();
-            fishPressed = true;
+            title << " | Sell[R] | Rod[1:" << rodUpgradeCost() << "g]"
+                  << " | Engine[2:" << engineUpgradeCost() << "g]"
+                  << " | Cargo[3:" << cargoUpgradeCost() << "g]";
         }
-        if (!keys[GLFW_KEY_E])
-            fishPressed = false;
-
-        if (keys[GLFW_KEY_R] && !sellPressed)
+        else
         {
-            sellCargo();
-            sellPressed = true;
+            title << " | E Fish";
         }
-        if (!keys[GLFW_KEY_R])
-            sellPressed = false;
 
-        if (keys[GLFW_KEY_1] && !rodUpgradePressed)
+        if (catchMessageTimer > 0.0f && !lastCatchText.empty())
         {
-            buyRodUpgrade();
-            rodUpgradePressed = true;
+            title << " | " << lastCatchText;
         }
-        if (!keys[GLFW_KEY_1])
-            rodUpgradePressed = false;
 
-        if (keys[GLFW_KEY_2] && !engineUpgradePressed)
-        {
-            buyEngineUpgrade();
-            engineUpgradePressed = true;
-        }
-        if (!keys[GLFW_KEY_2])
-            engineUpgradePressed = false;
+        glfwSetWindowTitle(window, title.str().c_str());
 
-        if (keys[GLFW_KEY_3] && !cargoUpgradePressed)
-        {
-            buyCargoUpgrade();
-            cargoUpgradePressed = true;
-        }
-        if (!keys[GLFW_KEY_3])
-            cargoUpgradePressed = false;
-
-        glfwSetWindowTitle(window, buildWindowTitle().c_str());
-
-        glm::vec3 base = glm::mix(getCurrentFogColor(), glm::vec3(0.58f, 0.76f, 0.94f), 0.35f);
-        if (catchFlashTimer > 0.0f)
-            base = glm::mix(base, glm::vec3(1.0f, 0.95f, 0.7f), glm::clamp(catchFlashTimer * 2.0f, 0.0f, 1.0f));
-
-        glClearColor(base.r, base.g, base.b, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glm::vec3 fogColor = getZoneFogColor();
+        glm::vec3 clearColor = glm::mix(fogColor, glm::vec3(0.95f, 0.90f, 0.78f), catchFlashTimer * 0.4f);
+        glClearColor(clearColor.r, clearColor.g, clearColor.b, 1.0f);
 
         glm::vec3 cameraPos = getCameraPosition();
-        glm::mat4 view = glm::lookAt(cameraPos, boat.position, glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::mat4 projection = glm::perspective(glm::radians(60.0f), static_cast<float>(SCR_WIDTH) / static_cast<float>(SCR_HEIGHT), 0.1f, 500.0f);
+        glm::mat4 view = glm::lookAt(cameraPos, boat.position + glm::vec3(0.0f, 0.9f, 0.0f), glm::vec3(0, 1, 0));
+        glm::mat4 projection = glm::perspective(glm::radians(60.0f), static_cast<float>(SCR_WIDTH) / SCR_HEIGHT, 0.1f, 500.0f);
 
-        renderScene(view, projection, currentFrame);
+        glm::vec3 lightPos(18.0f, 26.0f, 12.0f);
+        glm::mat4 lightProjection = glm::ortho(-65.0f, 65.0f, -65.0f, 65.0f, 1.0f, 100.0f);
+        glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0, 1, 0));
+        glm::mat4 lightSpaceMatrix = lightProjection * lightView;
+
+        renderDepthPass(lightSpaceMatrix, currentFrame);
+
+        glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        renderSkybox(view, projection);
+        renderWater(view, projection, lightSpaceMatrix, lightPos, cameraPos, currentFrame);
+        renderLitScene(view, projection, lightSpaceMatrix, lightPos, cameraPos, currentFrame);
+        renderParticles(view, projection);
+
+        int fbWidth = SCR_WIDTH;
+        int fbHeight = SCR_HEIGHT;
+        glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+
+        const FishZone* currentZone = getCurrentZone();
+        HUDState hud;
+        hud.screenWidth = fbWidth;
+        hud.screenHeight = fbHeight;
+        hud.zoneName = getCurrentZoneName();
+        hud.statusText = lastCatchText;
+        hud.gold = totalMoney;
+        hud.cargoCount = static_cast<int>(cargo.size());
+        hud.cargoCapacity = cargoCapacity;
+        hud.cargoValue = getCargoValue();
+        hud.rodLevel = rodLevel;
+        hud.engineLevel = engineLevel;
+        hud.speed = boat.velocity;
+        hud.danger = currentZone ? currentZone->danger : 0.0f;
+        hud.atDock = isAtDock();
+        hud.messageTimer = catchMessageTimer;
+        hud.flash = catchFlashTimer;
+        if (hud.atDock)
+        {
+            hud.hintText = "ROD " + std::to_string(rodUpgradeCost()) + "G | ENGINE " + std::to_string(engineUpgradeCost()) + "G | CARGO " + std::to_string(cargoUpgradeCost()) + "G";
+        }
+        else
+        {
+            hud.hintText = "CURRENT SPEED " + std::to_string(static_cast<int>(std::round(std::abs(boat.velocity) * 10.0f) / 10.0f)) + " | RETURN TO DOCK TO SELL";
+        }
+        RenderUIOverlay(hud);
+
         glfwSwapBuffers(window);
     }
 
-    glDeleteVertexArrays(1, &cubeVAO);
-    glDeleteBuffers(1, &cubeVBO);
-    glDeleteVertexArrays(1, &planeVAO);
-    glDeleteBuffers(1, &planeVBO);
-    glDeleteProgram(basicShader);
-    glDeleteProgram(waterShader);
-    glDeleteProgram(depthShader);
-    glDeleteProgram(particleShader);
-    glDeleteVertexArrays(1, &particleVAO);
-    glDeleteBuffers(1, &particleVBO);
-    glDeleteFramebuffers(1, &shadowFBO);
-    glDeleteTextures(1, &shadowMap);
+    ShutdownUIOverlay();
+
+    if (boatModel.vbo != 0) glDeleteBuffers(1, &boatModel.vbo);
+    if (boatModel.vao != 0) glDeleteVertexArrays(1, &boatModel.vao);
 
     glfwTerminate();
     return 0;
