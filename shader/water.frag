@@ -17,22 +17,37 @@ uniform float worldDanger;
 uniform float time;
 uniform sampler2D shadowMap;
 
+float hash12(vec2 p)
+{
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
 float calculateShadow(vec4 fragPosLightSpace)
 {
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     projCoords = projCoords * 0.5 + 0.5;
-    if (projCoords.z > 1.0) return 0.0;
+    if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0)
+        return 0.0;
+
+    const vec2 poisson[12] = vec2[](
+        vec2(-0.326, -0.406), vec2(-0.840, -0.074), vec2(-0.696,  0.457),
+        vec2(-0.203,  0.621), vec2( 0.962, -0.195), vec2( 0.473, -0.480),
+        vec2( 0.519,  0.767), vec2( 0.185, -0.893), vec2( 0.507,  0.064),
+        vec2( 0.896,  0.412), vec2(-0.322, -0.933), vec2(-0.792, -0.598)
+    );
+
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    float randAngle = hash12(FragPos.xz * 1.91) * 6.2831853;
+    mat2 rotation = mat2(cos(randAngle), -sin(randAngle), sin(randAngle), cos(randAngle));
+
     float shadow = 0.0;
-    for (int x = -1; x <= 1; ++x)
+    for (int i = 0; i < 12; ++i)
     {
-        for (int y = -1; y <= 1; ++y)
-        {
-            float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
-            shadow += (projCoords.z - 0.0015) > pcfDepth ? 1.0 : 0.0;
-        }
+        vec2 offset = rotation * poisson[i] * texelSize * 1.8;
+        float pcfDepth = texture(shadowMap, projCoords.xy + offset).r;
+        shadow += (projCoords.z - 0.0018) > pcfDepth ? 1.0 : 0.0;
     }
-    return shadow / 9.0;
+    return shadow / 12.0;
 }
 
 void main()

@@ -45,6 +45,12 @@
     <ClCompile Include="UIOverlay.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="PostProcess.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="FishingMinigame.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="helper\scene.h">
@@ -77,6 +83,12 @@
     <ClInclude Include="UIOverlay.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="PostProcess.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="FishingMinigame.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="shader\basic.frag">
@@ -107,6 +119,12 @@
       <Filter>shaders</Filter>
     </None>
     <None Include="shader\water.vert">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shader\postprocess.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="shader\postprocess.vert">
       <Filter>shaders</Filter>
     </None>
   </ItemGroup>

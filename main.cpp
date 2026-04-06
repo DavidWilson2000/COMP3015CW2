@@ -20,8 +20,9 @@
 
 #include "helper/stb/stb_image.h"
 #include "SimpleOBJLoader.h"
-#include "SkyboxCubemap.h"
+#include "PostProcess.h"
 #include "UIOverlay.h"
+#include "FishingMinigame.h"
 
 
 const unsigned int SCR_WIDTH = 1280;
@@ -29,6 +30,9 @@ const unsigned int SCR_HEIGHT = 720;
 const unsigned int SHADOW_WIDTH = 2048;
 const unsigned int SHADOW_HEIGHT = 2048;
 const int MAX_PARTICLES = 300;
+
+int gWindowWidth = SCR_WIDTH;
+int gWindowHeight = SCR_HEIGHT;
 
 const std::string BASIC_VERT_PATH = "shader/basic.vert";
 const std::string BASIC_FRAG_PATH = "shader/basic.frag";
@@ -40,6 +44,8 @@ const std::string PARTICLE_VERT_PATH = "shader/particle.vert";
 const std::string PARTICLE_FRAG_PATH = "shader/particle.frag";
 const std::string SKYBOX_VERT_PATH = "shader/skybox.vert";
 const std::string SKYBOX_FRAG_PATH = "shader/skybox.frag";
+const std::string POSTPROCESS_VERT_PATH = "shader/postprocess.vert";
+const std::string POSTPROCESS_FRAG_PATH = "shader/postprocess.frag";
 
 bool keys[1024] = { false };
 bool fishPressed = false;
@@ -47,6 +53,8 @@ bool sellPressed = false;
 bool upgrade1Pressed = false;
 bool upgrade2Pressed = false;
 bool upgrade3Pressed = false;
+bool minigameTogglePressed = false;
+bool minigameHookPressed = false;
 
 struct ModelMesh
 {
@@ -196,6 +204,20 @@ float catchFlashTimer = 0.0f;
 float catchMessageTimer = 0.0f;
 std::string lastCatchText = "No fish caught yet";
 
+struct EnvironmentBlendState
+{
+    glm::vec3 waterTint = glm::vec3(0.0f, 0.10f, 0.16f);
+    glm::vec3 fogColor = glm::vec3(0.70f, 0.82f, 0.94f);
+    float fogNear = 18.0f;
+    float fogFar = 72.0f;
+    float danger = 0.1f;
+};
+
+EnvironmentBlendState gEnvironmentBlend;
+FishingMinigame gFishingMinigame;
+int gFishingMinigameZoneIndex = -1;
+
+
 GLuint cubeVAO = 0, cubeVBO = 0;
 GLuint planeVAO = 0, planeVBO = 0;
 GLuint skyboxVAO = 0, skyboxVBO = 0;
@@ -206,6 +228,9 @@ GLuint waterShader = 0;
 GLuint depthShader = 0;
 GLuint particleShader = 0;
 GLuint skyboxShader = 0;
+
+PostProcessor gPostProcessor;
+PostProcessMode gPostMode = PostProcessMode::None;
 
 GLuint shadowFBO = 0;
 GLuint shadowMap = 0;
@@ -351,6 +376,8 @@ GLuint createShaderProgramFromFiles(const std::string& vertPath, const std::stri
 
 void framebuffer_size_callback(GLFWwindow*, int width, int height)
 {
+    gWindowWidth = width;
+    gWindowHeight = height;
     glViewport(0, 0, width, height);
 }
 
@@ -358,6 +385,14 @@ void key_callback(GLFWwindow* window, int key, int, int action, int)
 {
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
+
+    if (action == GLFW_PRESS)
+    {
+        if (key == GLFW_KEY_F5) gPostMode = PostProcessMode::Edge;
+        if (key == GLFW_KEY_F6) gPostMode = PostProcessMode::Blur;
+        if (key == GLFW_KEY_F7) gPostMode = PostProcessMode::NightVision;
+        if (key == GLFW_KEY_F8) gPostMode = PostProcessMode::None;
+    }
 
     if (key >= 0 && key < 1024)
     {
@@ -557,18 +592,31 @@ GLuint loadTextureFromFile(const std::string& path, bool flipVertically = true)
 
 GLuint createWoodTexture()
 {
-    const int w = 64, h = 64;
+    const int w = 128, h = 128;
     std::vector<unsigned char> data(w * h * 3);
     for (int y = 0; y < h; ++y)
     {
         for (int x = 0; x < w; ++x)
         {
-            float grain = std::sin(x * 0.35f) * 0.5f + 0.5f;
-            float knots = std::sin((x + y * 0.35f) * 0.18f) * 0.5f + 0.5f;
+            float xf = static_cast<float>(x) / static_cast<float>(w);
+            float yf = static_cast<float>(y) / static_cast<float>(h);
+
+            float warp = std::sin(yf * 24.0f + xf * 5.0f) * 0.08f + std::cos(yf * 11.0f) * 0.05f;
+            float grain = std::sin((xf + warp) * 54.0f) * 0.5f + 0.5f;
+            float fine = std::sin((xf + yf * 0.18f) * 140.0f) * 0.5f + 0.5f;
+
+            float knotDx = xf - 0.32f;
+            float knotDy = yf - 0.58f;
+            float knotDist = std::sqrt(knotDx * knotDx * 4.0f + knotDy * knotDy);
+            float knot = std::sin(knotDist * 120.0f + yf * 12.0f) * 0.5f + 0.5f;
+            knot *= std::exp(-knotDist * 9.0f);
+
+            float shade = 0.55f + grain * 0.35f + fine * 0.07f + knot * 0.25f;
+
             int i = (y * w + x) * 3;
-            data[i + 0] = static_cast<unsigned char>(85 + grain * 55 + knots * 12);
-            data[i + 1] = static_cast<unsigned char>(55 + grain * 25);
-            data[i + 2] = static_cast<unsigned char>(28 + grain * 15);
+            data[i + 0] = static_cast<unsigned char>(clampf(58.0f + shade * 82.0f, 0.0f, 255.0f));
+            data[i + 1] = static_cast<unsigned char>(clampf(32.0f + shade * 52.0f, 0.0f, 255.0f));
+            data[i + 2] = static_cast<unsigned char>(clampf(18.0f + shade * 28.0f, 0.0f, 255.0f));
         }
     }
     return createTextureFromRGBData(data, w, h);
@@ -649,6 +697,34 @@ GLuint createBuoyTexture()
     return createTextureFromRGBData(data, w, h);
 }
 
+GLuint createFallbackCubemap()
+{
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+
+    const unsigned char faces[6][3] = {
+        {118, 164, 214}, // right
+        {110, 156, 206}, // left
+        {76,  112, 170}, // top
+        {150, 170, 190}, // bottom
+        {124, 170, 220}, // front
+        {110, 150, 200}  // back
+    };
+
+    for (unsigned int i = 0; i < 6; ++i)
+    {
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, faces[i]);
+    }
+
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    return tex;
+}
+
 void setupShadowMap()
 {
     glGenFramebuffers(1, &shadowFBO);
@@ -699,34 +775,104 @@ std::string getCurrentZoneName()
     return zone ? zone->zoneName : "Open Water";
 }
 
-glm::vec3 getZoneWaterTint()
+glm::vec3 getDefaultWaterTint()
+{
+    return glm::vec3(0.0f, 0.10f, 0.16f);
+}
+
+glm::vec3 getDefaultFogColor()
+{
+    return glm::vec3(0.70f, 0.82f, 0.94f);
+}
+
+float getDefaultFogNear()
+{
+    return 18.0f;
+}
+
+float getDefaultFogFar()
+{
+    return 72.0f;
+}
+
+float getDefaultDanger()
+{
+    return 0.1f;
+}
+
+glm::vec3 getTargetZoneWaterTint()
 {
     const FishZone* zone = getCurrentZone();
-    return zone ? zone->tint : glm::vec3(0.0f, 0.10f, 0.16f);
+    return zone ? zone->tint : getDefaultWaterTint();
+}
+
+glm::vec3 getTargetZoneFogColor()
+{
+    const FishZone* zone = getCurrentZone();
+    return zone ? zone->fogColor : getDefaultFogColor();
+}
+
+float getTargetZoneFogNear()
+{
+    const FishZone* zone = getCurrentZone();
+    return zone ? zone->fogNear : getDefaultFogNear();
+}
+
+float getTargetZoneFogFar()
+{
+    const FishZone* zone = getCurrentZone();
+    return zone ? zone->fogFar : getDefaultFogFar();
+}
+
+float getTargetWorldDanger()
+{
+    const FishZone* zone = getCurrentZone();
+    return zone ? zone->danger : getDefaultDanger();
+}
+
+void initialiseEnvironmentBlend()
+{
+    gEnvironmentBlend.waterTint = getTargetZoneWaterTint();
+    gEnvironmentBlend.fogColor = getTargetZoneFogColor();
+    gEnvironmentBlend.fogNear = getTargetZoneFogNear();
+    gEnvironmentBlend.fogFar = getTargetZoneFogFar();
+    gEnvironmentBlend.danger = getTargetWorldDanger();
+}
+
+void updateEnvironmentBlend(float dt)
+{
+    const float blendStrength = 1.0f - std::exp(-2.4f * dt);
+
+    gEnvironmentBlend.waterTint = glm::mix(gEnvironmentBlend.waterTint, getTargetZoneWaterTint(), blendStrength);
+    gEnvironmentBlend.fogColor = glm::mix(gEnvironmentBlend.fogColor, getTargetZoneFogColor(), blendStrength);
+    gEnvironmentBlend.fogNear = glm::mix(gEnvironmentBlend.fogNear, getTargetZoneFogNear(), blendStrength);
+    gEnvironmentBlend.fogFar = glm::mix(gEnvironmentBlend.fogFar, getTargetZoneFogFar(), blendStrength);
+    gEnvironmentBlend.danger = glm::mix(gEnvironmentBlend.danger, getTargetWorldDanger(), blendStrength);
+}
+
+glm::vec3 getZoneWaterTint()
+{
+    return gEnvironmentBlend.waterTint;
 }
 
 glm::vec3 getZoneFogColor()
 {
-    const FishZone* zone = getCurrentZone();
-    return zone ? zone->fogColor : glm::vec3(0.70f, 0.82f, 0.94f);
+    return gEnvironmentBlend.fogColor;
 }
 
 float getZoneFogNear()
 {
-    const FishZone* zone = getCurrentZone();
-    return zone ? zone->fogNear : 18.0f;
+    return gEnvironmentBlend.fogNear;
 }
 
 float getZoneFogFar()
 {
-    const FishZone* zone = getCurrentZone();
-    return zone ? zone->fogFar : 72.0f;
+    return gEnvironmentBlend.fogFar;
 }
 
 float getWorldDanger()
 {
-    const FishZone* zone = getCurrentZone();
-    return zone ? zone->danger : 0.1f;
+    return gEnvironmentBlend.danger;
 }
 
 glm::vec3 getCameraPosition()
@@ -832,37 +978,60 @@ FishData catchFishFromZone(const FishZone& zone)
     return zone.fishPool[rand() % zone.fishPool.size()];
 }
 
-void tryFishing(GLFWwindow* window)
+void setCatchMessage(GLFWwindow* window, const std::string& message, float timer = 2.5f)
 {
-    if (fishCooldown > 0.0f) return;
-    fishCooldown = 1.0f;
+    lastCatchText = message;
+    catchMessageTimer = timer;
+    std::cout << "[Fish] " << lastCatchText << std::endl;
+    if (window) glfwSetWindowTitle(window, lastCatchText.c_str());
+}
+
+bool canStartFishing(std::string& failMessage)
+{
+    if (fishCooldown > 0.0f)
+    {
+        failMessage = "Line is not ready yet";
+        return false;
+    }
 
     const FishZone* zone = getCurrentZone();
     if (!zone)
     {
-        lastCatchText = "No fish here";
-        catchMessageTimer = 2.0f;
-        std::cout << "[Fish] " << lastCatchText << std::endl;
-        glfwSetWindowTitle(window, lastCatchText.c_str());
-        return;
+        failMessage = "No fish here";
+        return false;
     }
 
     if (static_cast<int>(cargo.size()) >= cargoCapacity)
     {
-        lastCatchText = "Cargo full - return to dock to sell";
-        catchMessageTimer = 2.5f;
-        std::cout << "[Fish] " << lastCatchText << std::endl;
-        glfwSetWindowTitle(window, lastCatchText.c_str());
-        return;
+        failMessage = "Cargo full - return to dock to sell";
+        return false;
     }
 
-    FishData fish = catchFishFromZone(*zone);
+    return true;
+}
+
+int getCurrentZoneIndex()
+{
+    for (size_t i = 0; i < zones.size(); ++i)
+    {
+        if (zones[i].contains(boat.position)) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+void awardFishCatch(GLFWwindow* window, const FishData& fish, float timingScore = 0.0f)
+{
     cargo.push_back({ fish });
 
     std::stringstream ss;
     if (fish.rarity == 3) { ss << "LEGENDARY CATCH! "; catchFlashTimer = 0.7f; }
     else if (fish.rarity == 2) { ss << "RARE CATCH! "; catchFlashTimer = 0.35f; }
     else if (fish.rarity == 1) { ss << "UNCOMMON CATCH! "; }
+
+    if (timingScore > 0.95f)
+        ss << "PERFECT HOOK! ";
+    else if (timingScore > 0.70f)
+        ss << "GOOD HOOK! ";
 
     ss << fish.name
        << " | Value: " << fish.value << "g"
@@ -877,9 +1046,80 @@ void tryFishing(GLFWwindow* window)
               << " | Cargo: " << cargo.size() << "/" << cargoCapacity
               << std::endl;
 
-    glfwSetWindowTitle(window, lastCatchText.c_str());
-
+    if (window) glfwSetWindowTitle(window, lastCatchText.c_str());
     spawnSplash(boat.position + glm::vec3(0.0f, 0.1f, 1.8f), glm::vec4(0.82f, 0.94f, 1.0f, 0.85f), 12);
+}
+
+FishData catchFishForMinigameResult(const FishZone& zone, float timingScore)
+{
+    FishData fish = catchFishFromZone(zone);
+
+    if (timingScore > 0.94f && fish.rarity < 3)
+    {
+        fish.rarity += 1;
+        fish.value = static_cast<int>(std::round(fish.value * 1.35f));
+    }
+    else if (timingScore > 0.75f)
+    {
+        fish.value = static_cast<int>(std::round(fish.value * 1.15f));
+    }
+
+    return fish;
+}
+
+void tryFishing(GLFWwindow* window)
+{
+    std::string failMessage;
+    if (!canStartFishing(failMessage))
+    {
+        setCatchMessage(window, failMessage, 2.3f);
+        return;
+    }
+
+    if (!gFishingMinigame.IsEnabled())
+    {
+        fishCooldown = 1.0f;
+        const FishZone* zone = getCurrentZone();
+        if (!zone)
+        {
+            setCatchMessage(window, "No fish here", 2.0f);
+            return;
+        }
+        FishData fish = catchFishFromZone(*zone);
+        awardFishCatch(window, fish, 0.0f);
+        return;
+    }
+
+    if (gFishingMinigame.IsActive())
+        return;
+
+    gFishingMinigameZoneIndex = getCurrentZoneIndex();
+    gFishingMinigame.Start();
+    fishCooldown = 0.2f;
+    lastCatchText = gFishingMinigame.GetStatusText();
+    catchMessageTimer = 10.0f;
+}
+
+void resolveFishingMinigame(GLFWwindow* window, const FishingMinigameResult& result)
+{
+    fishCooldown = result.success ? 0.8f : 0.5f;
+
+    if (!result.success)
+    {
+        catchFlashTimer = 0.0f;
+        setCatchMessage(window, result.message, 2.0f);
+        return;
+    }
+
+    int idx = gFishingMinigameZoneIndex;
+    if (idx < 0 || idx >= static_cast<int>(zones.size()))
+    {
+        setCatchMessage(window, "The fish got away", 2.0f);
+        return;
+    }
+
+    FishData fish = catchFishForMinigameResult(zones[idx], result.timingScore);
+    awardFishCatch(window, fish, result.timingScore);
 }
 
 void sellCargo()
@@ -1188,13 +1428,15 @@ void renderDepthPass(const glm::mat4& lightSpaceMatrix, float time)
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void renderSkybox(const glm::mat4& view, const glm::mat4& projection)
+void renderSkybox(const glm::mat4& view, const glm::mat4& projection, float time)
 {
     glDepthFunc(GL_LEQUAL);
     glUseProgram(skyboxShader);
     glm::mat4 skyView = glm::mat4(glm::mat3(view));
     setMat4(skyboxShader, "view", skyView);
     setMat4(skyboxShader, "projection", projection);
+    setFloat(skyboxShader, "time", time);
+    setFloat(skyboxShader, "worldDanger", getWorldDanger());
     glBindVertexArray(skyboxVAO);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxCubemap);
@@ -1309,7 +1551,12 @@ int main()
     depthShader = createShaderProgramFromFiles(DEPTH_VERT_PATH, DEPTH_FRAG_PATH);
     particleShader = createShaderProgramFromFiles(PARTICLE_VERT_PATH, PARTICLE_FRAG_PATH);
     skyboxShader = createShaderProgramFromFiles(SKYBOX_VERT_PATH, SKYBOX_FRAG_PATH);
+
     InitUIOverlay();
+    if (!gPostProcessor.Init(gWindowWidth, gWindowHeight, POSTPROCESS_VERT_PATH, POSTPROCESS_FRAG_PATH))
+    {
+        std::cerr << "Failed to initialize post-processing pipeline." << std::endl;
+    }
 
     setupCube();
     setupPlane();
@@ -1317,6 +1564,7 @@ int main()
     setupParticles();
     setupShadowMap();
     setupZones();
+    initialiseEnvironmentBlend();
 
     loadOBJModel("media/models/boat.obj", boatModel);
 
@@ -1335,7 +1583,7 @@ int main()
     buoyTex = loadTextureFromFile("textures/buoy.jpg");
     if (buoyTex == 0) buoyTex = createBuoyTexture();
 
-    skyboxCubemap = LoadSkyboxCubemapOrFallback("media/skybox/");
+    skyboxCubemap = createFallbackCubemap();
 
     float lastFrame = 0.0f;
 
@@ -1347,6 +1595,8 @@ int main()
 
         glfwPollEvents();
         boat.update(deltaTime);
+        updateEnvironmentBlend(deltaTime);
+        gFishingMinigame.Update(deltaTime);
 
         if (fishCooldown > 0.0f) fishCooldown -= deltaTime;
         if (catchFlashTimer > 0.0f) catchFlashTimer -= deltaTime;
@@ -1354,6 +1604,34 @@ int main()
 
         spawnWakeParticles();
         updateParticles(deltaTime);
+
+        if (keys[GLFW_KEY_M] && !minigameTogglePressed)
+        {
+            gFishingMinigame.ToggleEnabled();
+            minigameTogglePressed = true;
+            setCatchMessage(window, gFishingMinigame.IsEnabled() ? "Fishing minigame enabled" : "Fishing minigame disabled", 1.6f);
+        }
+        if (!keys[GLFW_KEY_M]) minigameTogglePressed = false;
+
+        if (gFishingMinigame.IsActive())
+        {
+            if (keys[GLFW_KEY_SPACE] && !minigameHookPressed)
+            {
+                gFishingMinigame.Hook();
+                minigameHookPressed = true;
+            }
+            if (!keys[GLFW_KEY_SPACE]) minigameHookPressed = false;
+        }
+        else
+        {
+            minigameHookPressed = false;
+        }
+
+        FishingMinigameResult minigameResult;
+        if (gFishingMinigame.ConsumeResult(minigameResult))
+        {
+            resolveFishingMinigame(window, minigameResult);
+        }
 
         if (keys[GLFW_KEY_E] && !fishPressed) { tryFishing(window); fishPressed = true; }
         if (!keys[GLFW_KEY_E]) fishPressed = false;
@@ -1376,6 +1654,13 @@ int main()
               << " | Cargo: " << cargo.size() << "/" << cargoCapacity << " (" << getCargoValue() << "g)"
               << " | Rod: " << rodLevel
               << " | Speed: " << std::fixed << std::setprecision(1) << boat.velocity;
+
+        const char* postLabel = "None";
+        if (gPostMode == PostProcessMode::Edge) postLabel = "Edge";
+        else if (gPostMode == PostProcessMode::Blur) postLabel = "Blur";
+        else if (gPostMode == PostProcessMode::NightVision) postLabel = "NightVision";
+        title << " | PP: " << postLabel
+              << " | MiniGame: " << (gFishingMinigame.IsEnabled() ? (gFishingMinigame.IsActive() ? "Active" : "On") : "Off");
         if (isAtDock())
         {
             title << " | Sell[R] | Rod[1:" << rodUpgradeCost() << "g]"
@@ -1400,7 +1685,9 @@ int main()
 
         glm::vec3 cameraPos = getCameraPosition();
         glm::mat4 view = glm::lookAt(cameraPos, boat.position + glm::vec3(0.0f, 0.9f, 0.0f), glm::vec3(0, 1, 0));
-        glm::mat4 projection = glm::perspective(glm::radians(60.0f), static_cast<float>(SCR_WIDTH) / SCR_HEIGHT, 0.1f, 500.0f);
+        gPostProcessor.EnsureSize(gWindowWidth, gWindowHeight);
+
+        glm::mat4 projection = glm::perspective(glm::radians(60.0f), static_cast<float>(gWindowWidth) / static_cast<float>(std::max(gWindowHeight, 1)), 0.1f, 500.0f);
 
         glm::vec3 lightPos(18.0f, 26.0f, 12.0f);
         glm::mat4 lightProjection = glm::ortho(-65.0f, 65.0f, -65.0f, 65.0f, 1.0f, 100.0f);
@@ -1409,22 +1696,23 @@ int main()
 
         renderDepthPass(lightSpaceMatrix, currentFrame);
 
-        glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+        gPostProcessor.BeginScene(clearColor);
+        glViewport(0, 0, gWindowWidth, gWindowHeight);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        renderSkybox(view, projection);
+        renderSkybox(view, projection, currentFrame);
         renderWater(view, projection, lightSpaceMatrix, lightPos, cameraPos, currentFrame);
         renderLitScene(view, projection, lightSpaceMatrix, lightPos, cameraPos, currentFrame);
         renderParticles(view, projection);
+        gPostProcessor.EndScene();
 
-        int fbWidth = SCR_WIDTH;
-        int fbHeight = SCR_HEIGHT;
-        glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+        glViewport(0, 0, gWindowWidth, gWindowHeight);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        gPostProcessor.Render(gPostMode, currentFrame);
 
-        const FishZone* currentZone = getCurrentZone();
         HUDState hud;
-        hud.screenWidth = fbWidth;
-        hud.screenHeight = fbHeight;
+        hud.screenWidth = gWindowWidth;
+        hud.screenHeight = gWindowHeight;
         hud.zoneName = getCurrentZoneName();
         hud.statusText = lastCatchText;
         hud.gold = totalMoney;
@@ -1433,28 +1721,36 @@ int main()
         hud.cargoValue = getCargoValue();
         hud.rodLevel = rodLevel;
         hud.engineLevel = engineLevel;
-        hud.speed = boat.velocity;
-        hud.danger = currentZone ? currentZone->danger : 0.0f;
+        hud.speed = std::abs(boat.velocity);
+        hud.danger = getWorldDanger();
         hud.atDock = isAtDock();
         hud.messageTimer = catchMessageTimer;
         hud.flash = catchFlashTimer;
-        if (hud.atDock)
+        if (gFishingMinigame.IsActive())
         {
-            hud.hintText = "ROD " + std::to_string(rodUpgradeCost()) + "G | ENGINE " + std::to_string(engineUpgradeCost()) + "G | CARGO " + std::to_string(cargoUpgradeCost()) + "G";
+            hud.hintText = gFishingMinigame.GetHintText();
+            hud.statusText = gFishingMinigame.GetStatusText();
+            hud.messageTimer = 999.0f;
+            hud.flash = 0.0f;
+        }
+        else if (hud.atDock)
+        {
+            hud.hintText = "SELL:R  ROD:1  ENGINE:2  CARGO:3  M MINIGAME  F5 EDGE  F6 BLUR";
         }
         else
         {
-            hud.hintText = "CURRENT SPEED " + std::to_string(static_cast<int>(std::round(std::abs(boat.velocity) * 10.0f) / 10.0f)) + " | RETURN TO DOCK TO SELL";
+            hud.hintText = "CURRENT SPEED " + std::to_string(static_cast<int>(std::abs(boat.velocity))) + " | M MINIGAME | RETURN TO DOCK TO SELL";
         }
         RenderUIOverlay(hud);
 
         glfwSwapBuffers(window);
     }
 
-    ShutdownUIOverlay();
-
     if (boatModel.vbo != 0) glDeleteBuffers(1, &boatModel.vbo);
     if (boatModel.vao != 0) glDeleteVertexArrays(1, &boatModel.vao);
+
+    gPostProcessor.Shutdown();
+    ShutdownUIOverlay();
 
     glfwTerminate();
     return 0;
