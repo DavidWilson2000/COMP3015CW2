@@ -23,6 +23,7 @@
 #include "PostProcess.h"
 #include "UIOverlay.h"
 #include "FishingMinigame.h"
+#include "SoundManager.h"
 
 
 const unsigned int SCR_WIDTH = 1280;
@@ -216,6 +217,7 @@ struct EnvironmentBlendState
 EnvironmentBlendState gEnvironmentBlend;
 FishingMinigame gFishingMinigame;
 int gFishingMinigameZoneIndex = -1;
+SoundManager gSound;
 
 
 GLuint cubeVAO = 0, cubeVBO = 0;
@@ -1048,6 +1050,7 @@ void awardFishCatch(GLFWwindow* window, const FishData& fish, float timingScore 
 
     if (window) glfwSetWindowTitle(window, lastCatchText.c_str());
     spawnSplash(boat.position + glm::vec3(0.0f, 0.1f, 1.8f), glm::vec4(0.82f, 0.94f, 1.0f, 0.85f), 12);
+    gSound.PlaySplash();
 }
 
 FishData catchFishForMinigameResult(const FishZone& zone, float timingScore)
@@ -1118,6 +1121,7 @@ void resolveFishingMinigame(GLFWwindow* window, const FishingMinigameResult& res
         return;
     }
 
+    gSound.PlayReel();
     FishData fish = catchFishForMinigameResult(zones[idx], result.timingScore);
     awardFishCatch(window, fish, result.timingScore);
 }
@@ -1585,6 +1589,15 @@ int main()
 
     skyboxCubemap = createFallbackCubemap();
 
+    if (!gSound.Init("media/sounds"))
+    {
+        std::cerr << "Failed to initialize sound manager." << std::endl;
+    }
+    else
+    {
+        gSound.PlayBackgroundLoop();
+    }
+
     float lastFrame = 0.0f;
 
     while (!glfwWindowShouldClose(window))
@@ -1595,6 +1608,7 @@ int main()
 
         glfwPollEvents();
         boat.update(deltaTime);
+        gSound.UpdateBoatMotor(std::abs(boat.velocity), boat.maxForwardSpeed);
         updateEnvironmentBlend(deltaTime);
         gFishingMinigame.Update(deltaTime);
 
@@ -1751,6 +1765,7 @@ int main()
 
     gPostProcessor.Shutdown();
     ShutdownUIOverlay();
+    gSound.Shutdown();
 
     glfwTerminate();
     return 0;

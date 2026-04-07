@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <sstream>
 
+
 namespace
 {
     float Clamp01(float value)
@@ -16,6 +17,7 @@ namespace
 }
 
 FishingMinigame::FishingMinigame() = default;
+
 
 void FishingMinigame::ToggleEnabled()
 {
@@ -96,6 +98,7 @@ void FishingMinigame::Hook()
     if (success)
     {
         QueueResult(true, perfect, timingScore, perfect ? "Perfect hook!" : "Good hook!");
+  
     }
     else
     {

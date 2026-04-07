@@ -51,6 +51,9 @@
     <ClCompile Include="FishingMinigame.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="SoundManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="helper\scene.h">
@@ -87,6 +90,9 @@
       <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="FishingMinigame.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SoundManager.h">
       <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>
