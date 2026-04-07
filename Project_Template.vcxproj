@@ -211,6 +211,8 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
     <ClCompile Include="glad.c" />
     <ClCompile Include="helper\glslprogram.cpp" />
     <ClCompile Include="helper\glutils.cpp" />
+    <ClCompile Include="IslandQuest.cpp" />
+    <ClCompile Include="LostIslandSetpiece.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="PostProcess.cpp" />
     <ClCompile Include="SkyboxCubemap.cpp" />
@@ -226,6 +228,8 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
     <ClInclude Include="helper\scenerunner.h" />
     <ClInclude Include="helper\stb\stb_image.h" />
     <ClInclude Include="helper\stb\stb_image_write.h" />
+    <ClInclude Include="IslandQuest.h" />
+    <ClInclude Include="LostIslandSetpiece.h" />
     <ClInclude Include="PostProcess.h" />
     <ClInclude Include="SimpleOBJLoader.h" />
     <ClInclude Include="SkyboxCubemap.h" />

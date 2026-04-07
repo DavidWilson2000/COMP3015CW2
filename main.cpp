@@ -24,6 +24,8 @@
 #include "UIOverlay.h"
 #include "FishingMinigame.h"
 #include "SoundManager.h"
+#include "IslandQuest.h"
+#include "LostIslandSetpiece.h"
 
 
 const unsigned int SCR_WIDTH = 1280;
@@ -218,6 +220,7 @@ EnvironmentBlendState gEnvironmentBlend;
 FishingMinigame gFishingMinigame;
 int gFishingMinigameZoneIndex = -1;
 SoundManager gSound;
+IslandQuest gIslandQuest;
 
 
 GLuint cubeVAO = 0, cubeVBO = 0;
@@ -244,6 +247,7 @@ GLuint boatTex = 0;
 GLuint buoyTex = 0;
 
 ModelMesh boatModel;
+ModelMesh swordModel;
 
 float boatVisualY = 0.18f;
 float boatVisualPitch = 0.0f;
@@ -877,6 +881,26 @@ float getWorldDanger()
     return gEnvironmentBlend.danger;
 }
 
+float getQuestFogFactor()
+{
+    return gIslandQuest.GetLockedFogFactor(boat.position);
+}
+
+glm::vec3 getEffectiveFogColor()
+{
+    return glm::mix(getZoneFogColor(), glm::vec3(0.80f, 0.82f, 0.86f), getQuestFogFactor());
+}
+
+float getEffectiveFogNear()
+{
+    return glm::mix(getZoneFogNear(), 3.5f, getQuestFogFactor());
+}
+
+float getEffectiveFogFar()
+{
+    return glm::mix(getZoneFogFar(), 11.0f, getQuestFogFactor());
+}
+
 glm::vec3 getCameraPosition()
 {
     float radians = glm::radians(boat.rotationY);
@@ -1088,6 +1112,16 @@ void tryFishing(GLFWwindow* window)
             setCatchMessage(window, "No fish here", 2.0f);
             return;
         }
+
+        const int zoneIndex = getCurrentZoneIndex();
+        if (gIslandQuest.TryCollectKeyForZone(zoneIndex, rodLevel, lastCatchText, catchMessageTimer))
+        {
+            if (window) glfwSetWindowTitle(window, lastCatchText.c_str());
+            spawnSplash(boat.position + glm::vec3(0.0f, 0.1f, 1.8f), glm::vec4(0.95f, 0.86f, 0.30f, 0.95f), 16);
+            gSound.PlaySplash();
+            return;
+        }
+
         FishData fish = catchFishFromZone(*zone);
         awardFishCatch(window, fish, 0.0f);
         return;
@@ -1122,6 +1156,15 @@ void resolveFishingMinigame(GLFWwindow* window, const FishingMinigameResult& res
     }
 
     gSound.PlayReel();
+
+    if (gIslandQuest.TryCollectKeyForZone(idx, rodLevel, lastCatchText, catchMessageTimer))
+    {
+        if (window) glfwSetWindowTitle(window, lastCatchText.c_str());
+        spawnSplash(boat.position + glm::vec3(0.0f, 0.1f, 1.8f), glm::vec4(0.95f, 0.86f, 0.30f, 0.95f), 18);
+        gSound.PlaySplash();
+        return;
+    }
+
     FishData fish = catchFishForMinigameResult(zones[idx], result.timingScore);
     awardFishCatch(window, fish, result.timingScore);
 }
@@ -1317,6 +1360,47 @@ void renderWorldGeometry(GLuint shader, bool depthPass, float time)
         }
     }
 
+    // Lost Island quest altar with sword
+    if (gIslandQuest.IsGoalIslandUnlocked() || gIslandQuest.HasWon())
+    {
+        glm::vec3 goalPos = gIslandQuest.GetGoalIslandPosition();
+
+        setMat(rockTex, MAT_ROCK, 2.8f);
+        for (int layer = 0; layer < 3; ++layer)
+        {
+            glm::mat4 rock(1.0f);
+            rock = glm::translate(rock, goalPos + glm::vec3(0.2f * layer, layer * 0.42f, -0.12f * layer));
+            rock = glm::scale(rock, glm::vec3(4.8f - layer * 0.9f, 1.0f, 4.4f - layer * 0.8f));
+            drawCube(shader, rock);
+        }
+
+        setMat(grassTex, MAT_GRASS, 3.0f);
+        glm::mat4 grass(1.0f);
+        grass = glm::translate(grass, goalPos + glm::vec3(0.0f, 1.35f, 0.0f));
+        grass = glm::scale(grass, glm::vec3(3.2f, 0.34f, 2.9f));
+        drawCube(shader, grass);
+
+        std::vector<glm::mat4> altarPieces = BuildLostIslandAltarTransforms(goalPos);
+        setMat(rockTex, MAT_ROCK, 1.7f);
+        for (const auto& piece : altarPieces)
+        {
+            drawCube(shader, piece);
+        }
+
+        if (swordModel.loaded)
+        {
+            setMat(boatTex, MAT_LIGHT, 1.0f);
+            glm::mat4 swordModelMatrix = BuildLostIslandSwordTransform(goalPos, time);
+            drawModel(shader, swordModel, swordModelMatrix);
+        }
+        else
+        {
+            setMat(boatTex, MAT_LIGHT, 1.0f);
+            glm::mat4 swordFallback = BuildLostIslandSwordFallbackTransform(goalPos, time);
+            drawCube(shader, swordFallback);
+        }
+    }
+
     // Zone buoys
     for (const auto& zone : zones)
     {
@@ -1459,9 +1543,9 @@ void renderWater(const glm::mat4& view, const glm::mat4& projection, const glm::
     setVec3(waterShader, "lightPos", lightPos);
     setVec3(waterShader, "viewPos", viewPos);
     setVec3(waterShader, "zoneTint", getZoneWaterTint());
-    setVec3(waterShader, "fogColor", getZoneFogColor());
-    setFloat(waterShader, "fogNear", getZoneFogNear());
-    setFloat(waterShader, "fogFar", getZoneFogFar());
+    setVec3(waterShader, "fogColor", getEffectiveFogColor());
+    setFloat(waterShader, "fogNear", getEffectiveFogNear());
+    setFloat(waterShader, "fogFar", getEffectiveFogFar());
     setFloat(waterShader, "worldDanger", getWorldDanger());
     setFloat(waterShader, "time", time);
     glActiveTexture(GL_TEXTURE1);
@@ -1481,9 +1565,9 @@ void renderLitScene(const glm::mat4& view, const glm::mat4& projection, const gl
     setMat4(basicShader, "lightSpaceMatrix", lightSpaceMatrix);
     setVec3(basicShader, "lightPos", lightPos);
     setVec3(basicShader, "viewPos", viewPos);
-    setVec3(basicShader, "fogColor", getZoneFogColor());
-    setFloat(basicShader, "fogNear", getZoneFogNear());
-    setFloat(basicShader, "fogFar", getZoneFogFar());
+    setVec3(basicShader, "fogColor", getEffectiveFogColor());
+    setFloat(basicShader, "fogNear", getEffectiveFogNear());
+    setFloat(basicShader, "fogFar", getEffectiveFogFar());
     setFloat(basicShader, "worldDanger", getWorldDanger());
 
     glActiveTexture(GL_TEXTURE1);
@@ -1571,6 +1655,10 @@ int main()
     initialiseEnvironmentBlend();
 
     loadOBJModel("media/models/boat.obj", boatModel);
+    if (!loadOBJModel("media/sword.obj", swordModel))
+    {
+        loadOBJModel("media/models/sword.obj", swordModel);
+    }
 
     woodTex = loadTextureFromFile("media/wood.jpg");
     if (woodTex == 0) woodTex = createWoodTexture();
@@ -1611,6 +1699,8 @@ int main()
         gSound.UpdateBoatMotor(std::abs(boat.velocity), boat.maxForwardSpeed);
         updateEnvironmentBlend(deltaTime);
         gFishingMinigame.Update(deltaTime);
+        gIslandQuest.Update(boat.position, lastCatchText, catchMessageTimer);
+        gIslandQuest.HandleTestGoldHotkey(keys[GLFW_KEY_G], totalMoney, lastCatchText, catchMessageTimer);
 
         if (fishCooldown > 0.0f) fishCooldown -= deltaTime;
         if (catchFlashTimer > 0.0f) catchFlashTimer -= deltaTime;
@@ -1674,7 +1764,8 @@ int main()
         else if (gPostMode == PostProcessMode::Blur) postLabel = "Blur";
         else if (gPostMode == PostProcessMode::NightVision) postLabel = "NightVision";
         title << " | PP: " << postLabel
-              << " | MiniGame: " << (gFishingMinigame.IsEnabled() ? (gFishingMinigame.IsActive() ? "Active" : "On") : "Off");
+              << " | MiniGame: " << (gFishingMinigame.IsEnabled() ? (gFishingMinigame.IsActive() ? "Active" : "On") : "Off")
+              << " | Quest: " << gIslandQuest.GetQuestSummary();
         if (isAtDock())
         {
             title << " | Sell[R] | Rod[1:" << rodUpgradeCost() << "g]"
@@ -1693,7 +1784,7 @@ int main()
 
         glfwSetWindowTitle(window, title.str().c_str());
 
-        glm::vec3 fogColor = getZoneFogColor();
+        glm::vec3 fogColor = getEffectiveFogColor();
         glm::vec3 clearColor = glm::mix(fogColor, glm::vec3(0.95f, 0.90f, 0.78f), catchFlashTimer * 0.4f);
         glClearColor(clearColor.r, clearColor.g, clearColor.b, 1.0f);
 
@@ -1727,7 +1818,7 @@ int main()
         HUDState hud;
         hud.screenWidth = gWindowWidth;
         hud.screenHeight = gWindowHeight;
-        hud.zoneName = getCurrentZoneName();
+        hud.zoneName = gIslandQuest.HasWon() ? "Lost Island" : getCurrentZoneName();
         hud.statusText = lastCatchText;
         hud.gold = totalMoney;
         hud.cargoCount = static_cast<int>(cargo.size());
@@ -1742,18 +1833,18 @@ int main()
         hud.flash = catchFlashTimer;
         if (gFishingMinigame.IsActive())
         {
-            hud.hintText = gFishingMinigame.GetHintText();
+            hud.hintText = gFishingMinigame.GetHintText() + " | " + gIslandQuest.GetQuestSummary();
             hud.statusText = gFishingMinigame.GetStatusText();
             hud.messageTimer = 999.0f;
             hud.flash = 0.0f;
         }
         else if (hud.atDock)
         {
-            hud.hintText = "SELL:R  ROD:1  ENGINE:2  CARGO:3  M MINIGAME  F5 EDGE  F6 BLUR";
+            hud.hintText = "SELL:R  ROD:1  ENGINE:2  CARGO:3  G +1000  M MINIGAME  | " + gIslandQuest.GetQuestSummary();
         }
         else
         {
-            hud.hintText = "CURRENT SPEED " + std::to_string(static_cast<int>(std::abs(boat.velocity))) + " | M MINIGAME | RETURN TO DOCK TO SELL";
+            hud.hintText = "CURRENT SPEED " + std::to_string(static_cast<int>(std::abs(boat.velocity))) + " | M MINIGAME | G +1000 | " + gIslandQuest.GetQuestSummary();
         }
         RenderUIOverlay(hud);
 
@@ -1762,6 +1853,8 @@ int main()
 
     if (boatModel.vbo != 0) glDeleteBuffers(1, &boatModel.vbo);
     if (boatModel.vao != 0) glDeleteVertexArrays(1, &boatModel.vao);
+    if (swordModel.vbo != 0) glDeleteBuffers(1, &swordModel.vbo);
+    if (swordModel.vao != 0) glDeleteVertexArrays(1, &swordModel.vao);
 
     gPostProcessor.Shutdown();
     ShutdownUIOverlay();

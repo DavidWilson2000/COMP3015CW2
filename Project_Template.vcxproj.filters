@@ -54,6 +54,12 @@
     <ClCompile Include="SoundManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="IslandQuest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="LostIslandSetpiece.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="helper\scene.h">
@@ -93,6 +99,12 @@
       <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="SoundManager.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="IslandQuest.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="LostIslandSetpiece.h">
       <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>
