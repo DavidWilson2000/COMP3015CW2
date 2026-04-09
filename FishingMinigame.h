@@ -19,7 +19,7 @@ public:
     bool IsEnabled() const;
     bool IsActive() const;
 
-    void Start();
+    void Start(int rodLevel, int fishRarity);
     void Cancel();
     void Update(float dt);
     void Hook();
@@ -35,6 +35,9 @@ private:
     bool m_enabled = false;
     bool m_active = false;
     bool m_hasPendingResult = false;
+
+    int m_rodLevel = 1;
+    int m_fishRarity = 0;
 
     float m_marker = 0.0f;
     float m_markerVelocity = 0.75f;

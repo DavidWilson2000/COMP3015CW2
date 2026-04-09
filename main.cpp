@@ -15,6 +15,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <cctype>
 
 #define STB_IMAGE_IMPLEMENTATION
 
@@ -56,6 +58,12 @@ bool sellPressed = false;
 bool upgrade1Pressed = false;
 bool upgrade2Pressed = false;
 bool upgrade3Pressed = false;
+bool repairPressed = false;
+bool startPressed = false;
+bool pausePressed = false;
+bool journalPressed = false;
+bool journalLeftPressed = false;
+bool journalRightPressed = false;
 bool minigameTogglePressed = false;
 bool minigameHookPressed = false;
 
@@ -197,6 +205,49 @@ std::vector<FishZone> zones;
 std::vector<CargoItem> cargo;
 std::vector<Particle> particles(MAX_PARTICLES);
 
+struct FishIconTexture
+{
+    GLuint texture = 0;
+    int width = 0;
+    int height = 0;
+    bool attempted = false;
+    bool found = false;
+};
+
+struct FishJournalEntry
+{
+    FishData baseFish;
+    bool discovered = false;
+    int caughtCount = 0;
+    int bestValue = 0;
+    int highestRarityCaught = 0;
+};
+
+std::unordered_map<std::string, FishIconTexture> gFishIconTextures;
+std::unordered_map<std::string, FishJournalEntry> gFishJournal;
+std::vector<std::string> gFishJournalOrder;
+std::string gLastCaughtFishName;
+GLuint gLastCaughtFishTexture = 0;
+int gLastCaughtFishTextureWidth = 0;
+int gLastCaughtFishTextureHeight = 0;
+bool gLastCaughtFishTextureMissing = false;
+int gLastCaughtFishRarity = 0;
+float gCaughtFishCardTimer = 0.0f;
+float gCatchBannerTimer = 0.0f;
+std::string gCatchBannerText;
+float gCameraShakeTimer = 0.0f;
+float gCameraShakeStrength = 0.0f;
+
+bool gGameStarted = false;
+bool gPaused = false;
+bool gJournalOpen = false;
+int gJournalPage = 0;
+float gSessionPlayTime = 0.0f;
+int gTotalFishCaught = 0;
+int gTotalGoldEarned = 0;
+int gTotalCargoSold = 0;
+int gPerfectHooks = 0;
+
 int totalMoney = 0;
 int rodLevel = 1;
 int engineLevel = 1;
@@ -205,6 +256,10 @@ int cargoCapacity = 5;
 float fishCooldown = 0.0f;
 float catchFlashTimer = 0.0f;
 float catchMessageTimer = 0.0f;
+float hullIntegrity = 100.0f;
+float hullWarningTimer = 0.0f;
+float engineStutterTimer = 0.0f;
+bool gWinCelebrationTriggered = false;
 std::string lastCatchText = "No fish caught yet";
 
 struct EnvironmentBlendState
@@ -219,6 +274,8 @@ struct EnvironmentBlendState
 EnvironmentBlendState gEnvironmentBlend;
 FishingMinigame gFishingMinigame;
 int gFishingMinigameZoneIndex = -1;
+FishData gPendingMinigameFish;
+bool gHasPendingMinigameFish = false;
 SoundManager gSound;
 IslandQuest gIslandQuest;
 
@@ -596,6 +653,241 @@ GLuint loadTextureFromFile(const std::string& path, bool flipVertically = true)
     return tex;
 }
 
+
+bool fileExists(const std::string& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    return file.good();
+}
+
+std::string makeFishTextureStem(const std::string& fishName)
+{
+    std::string stem;
+    for (char ch : fishName)
+    {
+        unsigned char uch = static_cast<unsigned char>(ch);
+        if (std::isalnum(uch))
+        {
+            stem.push_back(static_cast<char>(uch));
+        }
+    }
+    return stem;
+}
+
+std::vector<std::string> getFishTextureCandidates(const std::string& fishName)
+{
+    std::vector<std::string> candidates;
+    candidates.push_back("media/fish/" + fishName + ".png");
+
+    const std::string compactStem = makeFishTextureStem(fishName);
+    if (!compactStem.empty() && compactStem != fishName)
+    {
+        candidates.push_back("media/fish/" + compactStem + ".png");
+    }
+
+    candidates.push_back("media/fish/" + fishName + ".PNG");
+    if (!compactStem.empty() && compactStem != fishName)
+    {
+        candidates.push_back("media/fish/" + compactStem + ".PNG");
+    }
+
+    return candidates;
+}
+
+FishIconTexture loadFishIconTexture(const std::string& fishName)
+{
+    FishIconTexture icon;
+    icon.attempted = true;
+
+    const std::vector<std::string> candidates = getFishTextureCandidates(fishName);
+    std::string resolvedPath;
+    for (const auto& candidate : candidates)
+    {
+        if (fileExists(candidate))
+        {
+            resolvedPath = candidate;
+            break;
+        }
+    }
+
+    if (resolvedPath.empty())
+    {
+        std::cout << "No fish PNG found for: " << fishName << std::endl;
+        return icon;
+    }
+
+    stbi_set_flip_vertically_on_load(false);
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    unsigned char* data = stbi_load(resolvedPath.c_str(), &width, &height, &channels, 4);
+
+    if (!data)
+    {
+        std::cerr << "Failed to load fish PNG: " << resolvedPath << std::endl;
+        return icon;
+    }
+
+    glGenTextures(1, &icon.texture);
+    glBindTexture(GL_TEXTURE_2D, icon.texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    stbi_image_free(data);
+
+    icon.width = width;
+    icon.height = height;
+    icon.found = true;
+
+    std::cout << "Loaded fish PNG: " << resolvedPath << " (" << width << "x" << height << ")" << std::endl;
+    return icon;
+}
+
+const FishIconTexture& getFishIconTexture(const std::string& fishName)
+{
+    const std::string key = makeFishTextureStem(fishName).empty() ? fishName : makeFishTextureStem(fishName);
+    auto it = gFishIconTextures.find(key);
+    if (it == gFishIconTextures.end())
+    {
+        FishIconTexture icon = loadFishIconTexture(fishName);
+        it = gFishIconTextures.emplace(key, icon).first;
+    }
+    return it->second;
+}
+
+void ClearCaughtFishDisplay()
+{
+    gLastCaughtFishName.clear();
+    gLastCaughtFishTexture = 0;
+    gLastCaughtFishTextureWidth = 0;
+    gLastCaughtFishTextureHeight = 0;
+    gLastCaughtFishTextureMissing = false;
+    gLastCaughtFishRarity = 0;
+    gCaughtFishCardTimer = 0.0f;
+}
+
+void ShowCaughtFishDisplay(const FishData& fish)
+{
+    gLastCaughtFishName = fish.name;
+    gCaughtFishCardTimer = 3.25f;
+
+    const FishIconTexture& icon = getFishIconTexture(fish.name);
+    gLastCaughtFishTexture = icon.texture;
+    gLastCaughtFishTextureWidth = icon.width;
+    gLastCaughtFishTextureHeight = icon.height;
+    gLastCaughtFishTextureMissing = !icon.found;
+    gLastCaughtFishRarity = fish.rarity;
+}
+
+std::string MakeFishJournalKey(const std::string& fishName)
+{
+    const std::string compact = makeFishTextureStem(fishName);
+    return compact.empty() ? fishName : compact;
+}
+
+void TriggerCatchBanner(const std::string& text, float duration, float shakeStrength = 0.0f)
+{
+    gCatchBannerText = text;
+    gCatchBannerTimer = duration;
+    if (shakeStrength > 0.0f)
+    {
+        gCameraShakeTimer = std::max(gCameraShakeTimer, duration * 0.8f);
+        gCameraShakeStrength = std::max(gCameraShakeStrength, shakeStrength);
+    }
+}
+
+void RegisterFishJournalEntries()
+{
+    gFishJournal.clear();
+    gFishJournalOrder.clear();
+
+    for (const auto& zone : zones)
+    {
+        for (const auto& fish : zone.fishPool)
+        {
+            const std::string key = MakeFishJournalKey(fish.name);
+            if (gFishJournal.find(key) != gFishJournal.end())
+                continue;
+
+            FishJournalEntry entry;
+            entry.baseFish = fish;
+            entry.highestRarityCaught = fish.rarity;
+            gFishJournal[key] = entry;
+            gFishJournalOrder.push_back(key);
+        }
+    }
+}
+
+void RecordFishCaught(const FishData& fish)
+{
+    const std::string key = MakeFishJournalKey(fish.name);
+    auto it = gFishJournal.find(key);
+    if (it == gFishJournal.end())
+    {
+        FishJournalEntry entry;
+        entry.baseFish = fish;
+        entry.discovered = true;
+        entry.caughtCount = 1;
+        entry.bestValue = fish.value;
+        entry.highestRarityCaught = fish.rarity;
+        gFishJournal[key] = entry;
+        gFishJournalOrder.push_back(key);
+        return;
+    }
+
+    it->second.discovered = true;
+    it->second.caughtCount += 1;
+    it->second.bestValue = std::max(it->second.bestValue, fish.value);
+    it->second.highestRarityCaught = std::max(it->second.highestRarityCaught, fish.rarity);
+}
+
+int GetJournalPageCount()
+{
+    const int perPage = 4;
+    return std::max(1, static_cast<int>((gFishJournalOrder.size() + perPage - 1) / perPage));
+}
+
+std::vector<HUDJournalEntry> BuildJournalPageEntries(int page)
+{
+    std::vector<HUDJournalEntry> entries;
+    const int perPage = 4;
+    const int safePage = std::max(0, std::min(page, GetJournalPageCount() - 1));
+    const int start = safePage * perPage;
+    const int end = std::min(start + perPage, static_cast<int>(gFishJournalOrder.size()));
+
+    for (int i = start; i < end; ++i)
+    {
+        const auto it = gFishJournal.find(gFishJournalOrder[i]);
+        if (it == gFishJournal.end())
+            continue;
+
+        const FishJournalEntry& entry = it->second;
+        HUDJournalEntry hudEntry;
+        hudEntry.name = entry.baseFish.name;
+        hudEntry.rarity = entry.discovered ? entry.highestRarityCaught : entry.baseFish.rarity;
+        hudEntry.caughtCount = entry.caughtCount;
+        hudEntry.bestValue = entry.bestValue;
+        hudEntry.discovered = entry.discovered;
+
+        if (entry.discovered)
+        {
+            const FishIconTexture& icon = getFishIconTexture(entry.baseFish.name);
+            hudEntry.texture = icon.texture;
+            hudEntry.textureWidth = icon.width;
+            hudEntry.textureHeight = icon.height;
+            hudEntry.textureMissing = !icon.found;
+        }
+
+        entries.push_back(hudEntry);
+    }
+
+    return entries;
+}
+
 GLuint createWoodTexture()
 {
     const int w = 128, h = 128;
@@ -737,8 +1029,8 @@ void setupShadowMap()
     glGenTextures(1, &shadowMap);
     glBindTexture(GL_TEXTURE_2D, shadowMap);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
     float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
@@ -905,7 +1197,18 @@ glm::vec3 getCameraPosition()
 {
     float radians = glm::radians(boat.rotationY);
     glm::vec3 behind(-std::sin(radians), 0.0f, -std::cos(radians));
-    return boat.position + behind * 8.0f + glm::vec3(0.0f, 5.25f, 0.0f);
+    glm::vec3 cameraPos = boat.position + behind * 8.0f + glm::vec3(0.0f, 5.25f, 0.0f);
+
+    if (gCameraShakeTimer > 0.0f)
+    {
+        const float t = static_cast<float>(glfwGetTime());
+        const float fade = clampf(gCameraShakeTimer / std::max(gCameraShakeStrength > 0.0f ? 0.8f : 1.0f, 0.01f), 0.0f, 1.0f);
+        cameraPos.x += std::sin(t * 33.0f) * gCameraShakeStrength * 0.12f * fade;
+        cameraPos.y += std::cos(t * 41.0f) * gCameraShakeStrength * 0.10f * fade;
+        cameraPos.z += std::sin(t * 27.0f) * gCameraShakeStrength * 0.12f * fade;
+    }
+
+    return cameraPos;
 }
 
 bool isAtDock()
@@ -918,6 +1221,29 @@ int getCargoValue()
     int total = 0;
     for (const auto& item : cargo) total += item.fish.value;
     return total;
+}
+
+float getHullIntegrity01()
+{
+    return clampf(hullIntegrity / 100.0f, 0.0f, 1.0f);
+}
+
+int getRepairCost()
+{
+    const float missingHull = std::max(0.0f, 100.0f - hullIntegrity);
+    return static_cast<int>(std::ceil(missingHull * 1.4f));
+}
+
+void applyHullSpeedPenalty()
+{
+    const float health01 = getHullIntegrity01();
+    const float forwardScale = 0.45f + health01 * 0.55f;
+    const float backwardScale = 0.55f + health01 * 0.45f;
+
+    boat.velocity = glm::clamp(
+        boat.velocity,
+        -boat.maxBackwardSpeed * backwardScale,
+        boat.maxForwardSpeed * forwardScale);
 }
 
 int rodUpgradeCost() { return 20 + (rodLevel - 1) * 15; }
@@ -988,6 +1314,19 @@ FishData catchFishFromZone(const FishZone& zone)
     int roll = rand() % 100;
     roll -= (rodLevel - 1) * 6;
 
+    if (zone.danger < 0.3f)
+    {
+        roll += 12;
+    }
+    else if (zone.danger > 0.7f)
+    {
+        roll -= 18;
+    }
+    else if (zone.danger > 0.4f)
+    {
+        roll -= 8;
+    }
+
     std::vector<FishData> common, uncommon, rare, legendary;
     for (const auto& fish : zone.fishPool)
     {
@@ -996,6 +1335,12 @@ FishData catchFishFromZone(const FishZone& zone)
         else if (fish.rarity == 2) rare.push_back(fish);
         else legendary.push_back(fish);
     }
+
+    if (zone.danger < 0.3f && !common.empty() && roll < 58) return common[rand() % common.size()];
+    if (zone.danger < 0.3f && !uncommon.empty() && roll < 88) return uncommon[rand() % uncommon.size()];
+
+    if (zone.danger > 0.7f && !rare.empty() && roll < 78) return rare[rand() % rare.size()];
+    if (zone.danger > 0.7f && !legendary.empty() && roll < 100) return legendary[rand() % legendary.size()];
 
     if (roll < 48 && !common.empty()) return common[rand() % common.size()];
     if (roll < 78 && !uncommon.empty()) return uncommon[rand() % uncommon.size()];
@@ -1006,10 +1351,141 @@ FishData catchFishFromZone(const FishZone& zone)
 
 void setCatchMessage(GLFWwindow* window, const std::string& message, float timer = 2.5f)
 {
+    ClearCaughtFishDisplay();
     lastCatchText = message;
     catchMessageTimer = timer;
     std::cout << "[Fish] " << lastCatchText << std::endl;
     if (window) glfwSetWindowTitle(window, lastCatchText.c_str());
+}
+
+void breakBoatAndTowToDock(GLFWwindow* window)
+{
+    const int lostCargo = cargo.empty() ? 0 : std::max(1, static_cast<int>(cargo.size()) / 2);
+    if (lostCargo > 0)
+    {
+        cargo.erase(cargo.end() - lostCargo, cargo.end());
+    }
+
+    boat.position = glm::vec3(0.0f, 0.18f, 0.0f);
+    boat.velocity = 0.0f;
+    hullIntegrity = 40.0f;
+    gFishingMinigame.Cancel();
+    gHasPendingMinigameFish = false;
+    gFishingMinigameZoneIndex = -1;
+
+    catchFlashTimer = 1.0f;
+    hullWarningTimer = 4.0f;
+    TriggerCatchBanner("HULL BREACHED", 1.8f, 1.1f);
+    setCatchMessage(window, lostCargo > 0 ? "HULL BREACHED - TOWED TO DOCK - LOST CARGO" : "HULL BREACHED - TOWED TO DOCK", 3.5f);
+    spawnSplash(glm::vec3(0.0f, 0.25f, 0.0f), glm::vec4(1.0f, 0.74f, 0.30f, 0.95f), 22);
+    gSound.PlaySplash();
+}
+
+void triggerWinCelebration()
+{
+    if (gWinCelebrationTriggered || !gIslandQuest.HasWon()) return;
+
+    gWinCelebrationTriggered = true;
+    catchFlashTimer = 1.2f;
+    TriggerCatchBanner("LOST ISLAND REACHED", 2.6f, 0.8f);
+
+    const glm::vec3 goalPos = gIslandQuest.GetGoalIslandPosition();
+    spawnSplash(goalPos + glm::vec3(0.0f, 1.7f, 0.0f), glm::vec4(1.0f, 0.86f, 0.35f, 0.95f), 36);
+    spawnSplash(goalPos + glm::vec3(0.0f, 1.1f, 0.0f), glm::vec4(0.80f, 0.92f, 1.0f, 0.90f), 28);
+    gSound.PlaySplash();
+}
+
+void spawnLostIslandAuraParticles()
+{
+    if (!(gIslandQuest.IsGoalIslandUnlocked() || gIslandQuest.HasWon())) return;
+
+    const glm::vec3 goalPos = gIslandQuest.GetGoalIslandPosition();
+    const int particleCount = gIslandQuest.HasWon() ? 4 : 2;
+
+    for (int i = 0; i < particleCount; ++i)
+    {
+        const float angle = static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 6.28318f;
+        const float radius = gIslandQuest.HasWon() ? (0.45f + static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 1.15f)
+                                                 : (0.30f + static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 0.85f);
+
+        glm::vec3 pos = goalPos + glm::vec3(std::cos(angle) * radius, 1.30f + static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 0.85f, std::sin(angle) * radius);
+        glm::vec3 vel(std::cos(angle) * 0.04f, 0.30f + static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 0.20f, std::sin(angle) * 0.04f);
+        glm::vec4 color = gIslandQuest.HasWon() ? glm::vec4(1.0f, 0.84f, 0.36f, 0.82f)
+                                                : glm::vec4(0.72f, 0.88f, 1.0f, 0.70f);
+
+        spawnParticle(pos, vel, color, 0.95f, gIslandQuest.HasWon() ? 10.0f : 8.0f);
+    }
+
+    if (gIslandQuest.HasWon())
+    {
+        glm::vec3 beamPos = goalPos + glm::vec3(0.0f, 1.95f + static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 0.65f, 0.0f);
+        spawnParticle(beamPos, glm::vec3(0.0f, 0.55f, 0.0f), glm::vec4(1.0f, 0.94f, 0.60f, 0.78f), 0.9f, 13.0f);
+    }
+}
+
+void spawnZoneAmbientParticles(float time)
+{
+    for (size_t i = 0; i < zones.size(); ++i)
+    {
+        const FishZone& zone = zones[i];
+        float angle = time * (0.6f + 0.18f * static_cast<float>(i)) + static_cast<float>(i) * 1.9f;
+        glm::vec3 pos = zone.center + glm::vec3(std::cos(angle) * (0.6f + zone.radius * 0.08f), 1.15f + 0.22f * std::sin(time * 1.8f + static_cast<float>(i)), std::sin(angle) * (0.6f + zone.radius * 0.08f));
+        glm::vec3 vel(0.0f, 0.10f + zone.danger * 0.16f, 0.0f);
+        glm::vec4 color(zone.tint.r, zone.tint.g, zone.tint.b, 0.60f + zone.danger * 0.20f);
+        spawnParticle(pos, vel, color, 0.65f + zone.danger * 0.35f, 6.0f + zone.danger * 4.0f);
+    }
+}
+
+void updateDangerGameplay(GLFWwindow* window, float dt)
+{
+    if (hullWarningTimer > 0.0f) hullWarningTimer -= dt;
+    if (engineStutterTimer > 0.0f) engineStutterTimer -= dt;
+
+    if (isAtDock())
+    {
+        applyHullSpeedPenalty();
+        return;
+    }
+
+    const float danger = getWorldDanger();
+    const float speed01 = glm::clamp(std::abs(boat.velocity) / std::max(boat.maxForwardSpeed, 0.01f), 0.0f, 1.0f);
+
+    if (danger >= 0.35f)
+    {
+        const float damageRate = std::max(0.0f, danger - 0.30f) * (0.65f + speed01 * 0.95f) * 2.6f;
+        hullIntegrity = std::max(0.0f, hullIntegrity - damageRate * dt);
+
+        if (danger > 0.55f && hullWarningTimer <= 0.0f && speed01 > 0.18f)
+        {
+            setCatchMessage(window, hullIntegrity < 35.0f ? "HULL CRITICAL - REPAIR AT DOCK" : "ROUGH WATER - HULL TAKING DAMAGE", 1.4f);
+            TriggerCatchBanner(hullIntegrity < 35.0f ? "HULL CRITICAL" : "ROUGH WATER", 1.4f, 0.7f);
+            catchFlashTimer = std::max(catchFlashTimer, 0.35f);
+            hullWarningTimer = hullIntegrity < 35.0f ? 2.8f : 4.5f;
+        }
+    }
+
+    if (hullIntegrity < 55.0f && danger > 0.45f && engineStutterTimer <= 0.0f && std::abs(boat.velocity) > 0.5f)
+    {
+        const float healthPenalty = 1.0f - getHullIntegrity01();
+        const float stutterChancePerSecond = (danger - 0.35f) * 0.85f + healthPenalty * 0.65f;
+        const float triggerChance = clampf(stutterChancePerSecond * dt, 0.0f, 0.35f);
+        const float roll = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
+
+        if (roll < triggerChance)
+        {
+            boat.velocity *= 0.55f;
+            engineStutterTimer = 1.1f + healthPenalty * 1.1f;
+            setCatchMessage(window, "ENGINE STUTTER - HULL TOO DAMAGED", 1.2f);
+            TriggerCatchBanner("ENGINE STUTTER", 1.0f, 0.6f);
+        }
+    }
+
+    applyHullSpeedPenalty();
+
+    if (hullIntegrity <= 0.0f)
+    {
+        breakBoatAndTowToDock(window);
+    }
 }
 
 bool canStartFishing(std::string& failMessage)
@@ -1048,11 +1524,14 @@ int getCurrentZoneIndex()
 void awardFishCatch(GLFWwindow* window, const FishData& fish, float timingScore = 0.0f)
 {
     cargo.push_back({ fish });
+    RecordFishCaught(fish);
+    gTotalFishCaught += 1;
+    if (timingScore > 0.95f) gPerfectHooks += 1;
 
     std::stringstream ss;
-    if (fish.rarity == 3) { ss << "LEGENDARY CATCH! "; catchFlashTimer = 0.7f; }
-    else if (fish.rarity == 2) { ss << "RARE CATCH! "; catchFlashTimer = 0.35f; }
-    else if (fish.rarity == 1) { ss << "UNCOMMON CATCH! "; }
+    if (fish.rarity == 3) { ss << "LEGENDARY CATCH! "; catchFlashTimer = 0.9f; }
+    else if (fish.rarity == 2) { ss << "RARE CATCH! "; catchFlashTimer = 0.5f; }
+    else if (fish.rarity == 1) { ss << "UNCOMMON CATCH! "; catchFlashTimer = std::max(catchFlashTimer, 0.18f); }
 
     if (timingScore > 0.95f)
         ss << "PERFECT HOOK! ";
@@ -1064,7 +1543,16 @@ void awardFishCatch(GLFWwindow* window, const FishData& fish, float timingScore 
        << " | Cargo: " << cargo.size() << "/" << cargoCapacity;
 
     lastCatchText = ss.str();
-    catchMessageTimer = 3.0f;
+    catchMessageTimer = timingScore > 0.95f ? 3.8f : 3.0f;
+    ShowCaughtFishDisplay(fish);
+    gLastCaughtFishRarity = fish.rarity;
+
+    if (timingScore > 0.95f)
+        TriggerCatchBanner("PERFECT HOOK", 1.6f, 0.45f);
+    else if (fish.rarity == 3)
+        TriggerCatchBanner("LEGENDARY CATCH", 1.9f, 0.9f);
+    else if (fish.rarity == 2)
+        TriggerCatchBanner("RARE CATCH", 1.5f, 0.65f);
 
     std::cout << "[Catch] " << fish.name
               << " | Rarity: " << fish.rarity
@@ -1073,14 +1561,16 @@ void awardFishCatch(GLFWwindow* window, const FishData& fish, float timingScore 
               << std::endl;
 
     if (window) glfwSetWindowTitle(window, lastCatchText.c_str());
-    spawnSplash(boat.position + glm::vec3(0.0f, 0.1f, 1.8f), glm::vec4(0.82f, 0.94f, 1.0f, 0.85f), 12);
+    const glm::vec3 zoneTint = getZoneWaterTint();
+    glm::vec4 splashColor(zoneTint.r + 0.35f, zoneTint.g + 0.28f, zoneTint.b + 0.26f, 0.90f);
+    spawnSplash(boat.position + glm::vec3(0.0f, 0.1f, 1.8f), splashColor, fish.rarity >= 2 ? 16 : 12);
     gSound.PlaySplash();
+    if (fish.rarity >= 1) gSound.PlayReel();
+    if (fish.rarity == 3) gSound.PlaySplash();
 }
 
-FishData catchFishForMinigameResult(const FishZone& zone, float timingScore)
+FishData catchFishForMinigameResult(FishData fish, float timingScore)
 {
-    FishData fish = catchFishFromZone(zone);
-
     if (timingScore > 0.94f && fish.rarity < 3)
     {
         fish.rarity += 1;
@@ -1103,19 +1593,21 @@ void tryFishing(GLFWwindow* window)
         return;
     }
 
+    const FishZone* zone = getCurrentZone();
+    if (!zone)
+    {
+        setCatchMessage(window, "No fish here", 2.0f);
+        return;
+    }
+
     if (!gFishingMinigame.IsEnabled())
     {
         fishCooldown = 1.0f;
-        const FishZone* zone = getCurrentZone();
-        if (!zone)
-        {
-            setCatchMessage(window, "No fish here", 2.0f);
-            return;
-        }
 
         const int zoneIndex = getCurrentZoneIndex();
         if (gIslandQuest.TryCollectKeyForZone(zoneIndex, rodLevel, lastCatchText, catchMessageTimer))
         {
+            ClearCaughtFishDisplay();
             if (window) glfwSetWindowTitle(window, lastCatchText.c_str());
             spawnSplash(boat.position + glm::vec3(0.0f, 0.1f, 1.8f), glm::vec4(0.95f, 0.86f, 0.30f, 0.95f), 16);
             gSound.PlaySplash();
@@ -1131,7 +1623,9 @@ void tryFishing(GLFWwindow* window)
         return;
 
     gFishingMinigameZoneIndex = getCurrentZoneIndex();
-    gFishingMinigame.Start();
+    gPendingMinigameFish = catchFishFromZone(*zone);
+    gHasPendingMinigameFish = true;
+    gFishingMinigame.Start(rodLevel, gPendingMinigameFish.rarity);
     fishCooldown = 0.2f;
     lastCatchText = gFishingMinigame.GetStatusText();
     catchMessageTimer = 10.0f;
@@ -1143,6 +1637,7 @@ void resolveFishingMinigame(GLFWwindow* window, const FishingMinigameResult& res
 
     if (!result.success)
     {
+        gHasPendingMinigameFish = false;
         catchFlashTimer = 0.0f;
         setCatchMessage(window, result.message, 2.0f);
         return;
@@ -1151,6 +1646,7 @@ void resolveFishingMinigame(GLFWwindow* window, const FishingMinigameResult& res
     int idx = gFishingMinigameZoneIndex;
     if (idx < 0 || idx >= static_cast<int>(zones.size()))
     {
+        gHasPendingMinigameFish = false;
         setCatchMessage(window, "The fish got away", 2.0f);
         return;
     }
@@ -1159,13 +1655,17 @@ void resolveFishingMinigame(GLFWwindow* window, const FishingMinigameResult& res
 
     if (gIslandQuest.TryCollectKeyForZone(idx, rodLevel, lastCatchText, catchMessageTimer))
     {
+        gHasPendingMinigameFish = false;
+        ClearCaughtFishDisplay();
         if (window) glfwSetWindowTitle(window, lastCatchText.c_str());
         spawnSplash(boat.position + glm::vec3(0.0f, 0.1f, 1.8f), glm::vec4(0.95f, 0.86f, 0.30f, 0.95f), 18);
         gSound.PlaySplash();
         return;
     }
 
-    FishData fish = catchFishForMinigameResult(zones[idx], result.timingScore);
+    FishData fish = gHasPendingMinigameFish ? gPendingMinigameFish : catchFishFromZone(zones[idx]);
+    gHasPendingMinigameFish = false;
+    fish = catchFishForMinigameResult(fish, result.timingScore);
     awardFishCatch(window, fish, result.timingScore);
 }
 
@@ -1173,10 +1673,15 @@ void sellCargo()
 {
     if (!isAtDock() || cargo.empty()) return;
     int soldValue = getCargoValue();
+    const int soldCount = static_cast<int>(cargo.size());
     totalMoney += soldValue;
+    gTotalGoldEarned += soldValue;
+    gTotalCargoSold += soldCount;
     cargo.clear();
+    ClearCaughtFishDisplay();
     lastCatchText = "Sold cargo for " + std::to_string(soldValue) + "g";
     catchMessageTimer = 2.5f;
+    TriggerCatchBanner("CARGO SOLD", 1.1f);
     std::cout << "[Dock] " << lastCatchText << " | Gold: " << totalMoney << std::endl;
     spawnSplash(glm::vec3(0.0f, 0.3f, 1.2f), glm::vec4(1.0f, 0.86f, 0.35f, 1.0f), 18);
 }
@@ -1186,10 +1691,12 @@ void buyRodUpgrade()
     int cost = rodUpgradeCost();
     if (!isAtDock() || totalMoney < cost) return;
     totalMoney -= cost;
+    ClearCaughtFishDisplay();
     rodLevel++;
     lastCatchText = "Bought rod upgrade for " + std::to_string(cost) + "g";
     catchMessageTimer = 2.5f;
     std::cout << "[Dock] " << lastCatchText << " | Rod: " << rodLevel << std::endl;
+    TriggerCatchBanner("ROD UPGRADED", 1.0f);
 }
 
 void buyEngineUpgrade()
@@ -1197,12 +1704,14 @@ void buyEngineUpgrade()
     int cost = engineUpgradeCost();
     if (!isAtDock() || totalMoney < cost) return;
     totalMoney -= cost;
+    ClearCaughtFishDisplay();
     engineLevel++;
     boat.maxForwardSpeed += 1.2f;
     boat.acceleration += 0.35f;
     lastCatchText = "Bought engine upgrade for " + std::to_string(cost) + "g";
     catchMessageTimer = 2.5f;
     std::cout << "[Dock] " << lastCatchText << " | Engine: " << engineLevel << std::endl;
+    TriggerCatchBanner("ENGINE UPGRADED", 1.0f);
 }
 
 void buyCargoUpgrade()
@@ -1210,11 +1719,35 @@ void buyCargoUpgrade()
     int cost = cargoUpgradeCost();
     if (!isAtDock() || totalMoney < cost) return;
     totalMoney -= cost;
+    ClearCaughtFishDisplay();
     cargoLevel++;
     cargoCapacity += 2;
     lastCatchText = "Bought cargo upgrade for " + std::to_string(cost) + "g";
     catchMessageTimer = 2.5f;
     std::cout << "[Dock] " << lastCatchText << " | Capacity: " << cargoCapacity << std::endl;
+    TriggerCatchBanner("CARGO EXPANDED", 1.0f);
+}
+
+void repairHull()
+{
+    if (!isAtDock()) return;
+    if (hullIntegrity >= 99.9f) return;
+
+    const int cost = getRepairCost();
+    if (totalMoney < cost) return;
+
+    totalMoney -= cost;
+    hullIntegrity = 100.0f;
+    engineStutterTimer = 0.0f;
+    hullWarningTimer = 0.0f;
+    ClearCaughtFishDisplay();
+    lastCatchText = "Repaired hull for " + std::to_string(cost) + "g";
+    catchMessageTimer = 2.5f;
+    catchFlashTimer = std::max(catchFlashTimer, 0.25f);
+    std::cout << "[Dock] " << lastCatchText << " | Hull: " << hullIntegrity << std::endl;
+    spawnSplash(glm::vec3(0.0f, 0.3f, 1.2f), glm::vec4(0.72f, 0.92f, 1.0f, 0.95f), 14);
+    gSound.PlaySplash();
+    TriggerCatchBanner("HULL REPAIRED", 1.1f);
 }
 
 void bindMaterial(GLuint shader, GLuint textureID, int materialType, float tiling)
@@ -1360,28 +1893,13 @@ void renderWorldGeometry(GLuint shader, bool depthPass, float time)
         }
     }
 
-    // Lost Island quest altar with sword
+    // Lost Island altar with sword
     if (gIslandQuest.IsGoalIslandUnlocked() || gIslandQuest.HasWon())
     {
         glm::vec3 goalPos = gIslandQuest.GetGoalIslandPosition();
 
-        setMat(rockTex, MAT_ROCK, 2.8f);
-        for (int layer = 0; layer < 3; ++layer)
-        {
-            glm::mat4 rock(1.0f);
-            rock = glm::translate(rock, goalPos + glm::vec3(0.2f * layer, layer * 0.42f, -0.12f * layer));
-            rock = glm::scale(rock, glm::vec3(4.8f - layer * 0.9f, 1.0f, 4.4f - layer * 0.8f));
-            drawCube(shader, rock);
-        }
-
-        setMat(grassTex, MAT_GRASS, 3.0f);
-        glm::mat4 grass(1.0f);
-        grass = glm::translate(grass, goalPos + glm::vec3(0.0f, 1.35f, 0.0f));
-        grass = glm::scale(grass, glm::vec3(3.2f, 0.34f, 2.9f));
-        drawCube(shader, grass);
-
         std::vector<glm::mat4> altarPieces = BuildLostIslandAltarTransforms(goalPos);
-        setMat(rockTex, MAT_ROCK, 1.7f);
+        setMat(rockTex, MAT_ROCK, 1.9f);
         for (const auto& piece : altarPieces)
         {
             drawCube(shader, piece);
@@ -1402,19 +1920,46 @@ void renderWorldGeometry(GLuint shader, bool depthPass, float time)
     }
 
     // Zone buoys
-    for (const auto& zone : zones)
+    for (size_t zoneIndex = 0; zoneIndex < zones.size(); ++zoneIndex)
     {
+        const auto& zone = zones[zoneIndex];
         float pulse = 1.0f + std::sin(time * 2.1f + zone.center.x) * 0.05f;
         setMat(buoyTex, MAT_BUOY, 1.0f);
+
+        glm::vec3 bodyScale(0.4f, 1.2f, 0.4f);
+        glm::vec3 topScale(0.24f, 0.24f, 0.24f);
+        if (zoneIndex == 0)
+        {
+            bodyScale = glm::vec3(0.46f, 1.0f, 0.46f);
+            topScale = glm::vec3(0.28f, 0.18f, 0.28f);
+        }
+        else if (zoneIndex == 1)
+        {
+            bodyScale = glm::vec3(0.34f, 1.45f, 0.34f);
+            topScale = glm::vec3(0.18f, 0.30f, 0.18f);
+        }
+        else
+        {
+            bodyScale = glm::vec3(0.42f, 1.55f, 0.42f);
+            topScale = glm::vec3(0.30f, 0.22f, 0.30f);
+        }
+
+        glm::vec3 basePos = zone.center + glm::vec3(0.0f, 0.7f + std::sin(time * 1.4f + zone.center.z) * 0.08f, 0.0f);
+
         glm::mat4 buoy(1.0f);
-        buoy = glm::translate(buoy, zone.center + glm::vec3(0.0f, 0.7f + std::sin(time * 1.4f + zone.center.z) * 0.08f, 0.0f));
-        buoy = glm::scale(buoy, glm::vec3(0.4f * pulse, 1.2f * pulse, 0.4f * pulse));
+        buoy = glm::translate(buoy, basePos);
+        buoy = glm::scale(buoy, bodyScale * pulse);
         drawCube(shader, buoy);
+
+        glm::mat4 buoyTop(1.0f);
+        buoyTop = glm::translate(buoyTop, basePos + glm::vec3(0.0f, bodyScale.y * 0.72f + topScale.y * 0.6f, 0.0f));
+        buoyTop = glm::scale(buoyTop, topScale * pulse);
+        drawCube(shader, buoyTop);
 
         setMat(woodTex, MAT_WOOD, 1.0f);
         glm::mat4 mast(1.0f);
-        mast = glm::translate(mast, zone.center + glm::vec3(0.0f, 1.75f, 0.0f));
-        mast = glm::scale(mast, glm::vec3(0.08f, 1.2f, 0.08f));
+        mast = glm::translate(mast, zone.center + glm::vec3(0.0f, 1.75f + zoneIndex * 0.12f, 0.0f));
+        mast = glm::scale(mast, glm::vec3(0.08f, 1.1f + zoneIndex * 0.2f, 0.08f));
         drawCube(shader, mast);
     }
 
@@ -1510,9 +2055,12 @@ void renderDepthPass(const glm::mat4& lightSpaceMatrix, float time)
     glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFBO);
     glClear(GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(2.0f, 4.0f);
     glUseProgram(depthShader);
     setMat4(depthShader, "lightSpaceMatrix", lightSpaceMatrix);
     renderWorldGeometry(depthShader, true, time);
+    glDisable(GL_POLYGON_OFFSET_FILL);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -1652,6 +2200,7 @@ int main()
     setupParticles();
     setupShadowMap();
     setupZones();
+    RegisterFishJournalEntries();
     initialiseEnvironmentBlend();
 
     loadOBJModel("media/models/boat.obj", boatModel);
@@ -1695,68 +2244,159 @@ int main()
         lastFrame = currentFrame;
 
         glfwPollEvents();
-        boat.update(deltaTime);
-        gSound.UpdateBoatMotor(std::abs(boat.velocity), boat.maxForwardSpeed);
-        updateEnvironmentBlend(deltaTime);
-        gFishingMinigame.Update(deltaTime);
-        gIslandQuest.Update(boat.position, lastCatchText, catchMessageTimer);
-        gIslandQuest.HandleTestGoldHotkey(keys[GLFW_KEY_G], totalMoney, lastCatchText, catchMessageTimer);
 
-        if (fishCooldown > 0.0f) fishCooldown -= deltaTime;
-        if (catchFlashTimer > 0.0f) catchFlashTimer -= deltaTime;
-        if (catchMessageTimer > 0.0f) catchMessageTimer -= deltaTime;
-
-        spawnWakeParticles();
-        updateParticles(deltaTime);
-
-        if (keys[GLFW_KEY_M] && !minigameTogglePressed)
+        if (keys[GLFW_KEY_ENTER] && !startPressed)
         {
-            gFishingMinigame.ToggleEnabled();
-            minigameTogglePressed = true;
-            setCatchMessage(window, gFishingMinigame.IsEnabled() ? "Fishing minigame enabled" : "Fishing minigame disabled", 1.6f);
-        }
-        if (!keys[GLFW_KEY_M]) minigameTogglePressed = false;
-
-        if (gFishingMinigame.IsActive())
-        {
-            if (keys[GLFW_KEY_SPACE] && !minigameHookPressed)
+            if (!gGameStarted)
             {
-                gFishingMinigame.Hook();
-                minigameHookPressed = true;
+                gGameStarted = true;
+                lastCatchText = "Set sail and find the 3 keys";
+                catchMessageTimer = 2.0f;
+                TriggerCatchBanner("VOYAGE STARTED", 1.2f);
             }
-            if (!keys[GLFW_KEY_SPACE]) minigameHookPressed = false;
+            startPressed = true;
+        }
+        if (!keys[GLFW_KEY_ENTER]) startPressed = false;
+
+        if (gGameStarted && keys[GLFW_KEY_P] && !pausePressed)
+        {
+            gPaused = !gPaused;
+            if (gPaused) gJournalOpen = false;
+            pausePressed = true;
+        }
+        if (!keys[GLFW_KEY_P]) pausePressed = false;
+
+        if (gGameStarted && keys[GLFW_KEY_J] && !journalPressed)
+        {
+            gJournalOpen = !gJournalOpen;
+            if (gJournalOpen) gPaused = false;
+            journalPressed = true;
+        }
+        if (!keys[GLFW_KEY_J]) journalPressed = false;
+
+        if (gJournalOpen && keys[GLFW_KEY_LEFT] && !journalLeftPressed)
+        {
+            gJournalPage = std::max(0, gJournalPage - 1);
+            journalLeftPressed = true;
+        }
+        if (!keys[GLFW_KEY_LEFT]) journalLeftPressed = false;
+
+        if (gJournalOpen && keys[GLFW_KEY_RIGHT] && !journalRightPressed)
+        {
+            gJournalPage = std::min(GetJournalPageCount() - 1, gJournalPage + 1);
+            journalRightPressed = true;
+        }
+        if (!keys[GLFW_KEY_RIGHT]) journalRightPressed = false;
+
+        const bool gameplayBlocked = !gGameStarted || gPaused || gJournalOpen;
+
+        if (!gameplayBlocked)
+        {
+            gSessionPlayTime += deltaTime;
+            boat.update(deltaTime);
+            updateEnvironmentBlend(deltaTime);
+            gFishingMinigame.Update(deltaTime);
+
+            const int keysBeforeQuestUpdate = gIslandQuest.GetCollectedKeyCount();
+            const bool hadWonBeforeQuestUpdate = gIslandQuest.HasWon();
+            const std::string statusBeforeSystemMessages = lastCatchText;
+            gIslandQuest.Update(boat.position, lastCatchText, catchMessageTimer);
+            gIslandQuest.HandleTestGoldHotkey(keys[GLFW_KEY_G], totalMoney, lastCatchText, catchMessageTimer);
+            if (gIslandQuest.GetCollectedKeyCount() != keysBeforeQuestUpdate ||
+                gIslandQuest.HasWon() != hadWonBeforeQuestUpdate ||
+                (keys[GLFW_KEY_G] && lastCatchText != statusBeforeSystemMessages))
+            {
+                ClearCaughtFishDisplay();
+            }
+
+            updateDangerGameplay(window, deltaTime);
+            gSound.UpdateBoatMotor(std::abs(boat.velocity), boat.maxForwardSpeed);
+            triggerWinCelebration();
+
+            if (fishCooldown > 0.0f) fishCooldown -= deltaTime;
+            if (catchFlashTimer > 0.0f) catchFlashTimer -= deltaTime;
+            if (catchMessageTimer > 0.0f) catchMessageTimer -= deltaTime;
+            if (gCaughtFishCardTimer > 0.0f) gCaughtFishCardTimer -= deltaTime;
+            if (gCatchBannerTimer > 0.0f) gCatchBannerTimer -= deltaTime;
+            if (gCameraShakeTimer > 0.0f) gCameraShakeTimer -= deltaTime;
+            else gCameraShakeStrength = 0.0f;
+
+            spawnWakeParticles();
+
+            if (keys[GLFW_KEY_M] && !minigameTogglePressed)
+            {
+                gFishingMinigame.ToggleEnabled();
+                if (!gFishingMinigame.IsEnabled())
+                {
+                    gHasPendingMinigameFish = false;
+                    gFishingMinigameZoneIndex = -1;
+                }
+                minigameTogglePressed = true;
+                setCatchMessage(window, gFishingMinigame.IsEnabled() ? "Fishing minigame enabled" : "Fishing minigame disabled", 1.6f);
+            }
+            if (!keys[GLFW_KEY_M]) minigameTogglePressed = false;
+
+            if (gFishingMinigame.IsActive())
+            {
+                if (keys[GLFW_KEY_SPACE] && !minigameHookPressed)
+                {
+                    gFishingMinigame.Hook();
+                    minigameHookPressed = true;
+                }
+                if (!keys[GLFW_KEY_SPACE]) minigameHookPressed = false;
+            }
+            else
+            {
+                minigameHookPressed = false;
+            }
+
+            FishingMinigameResult minigameResult;
+            if (gFishingMinigame.ConsumeResult(minigameResult))
+            {
+                resolveFishingMinigame(window, minigameResult);
+            }
+
+            if (keys[GLFW_KEY_E] && !fishPressed) { tryFishing(window); fishPressed = true; }
+            if (!keys[GLFW_KEY_E]) fishPressed = false;
+
+            if (keys[GLFW_KEY_R] && !sellPressed) { sellCargo(); sellPressed = true; }
+            if (!keys[GLFW_KEY_R]) sellPressed = false;
+
+            if (keys[GLFW_KEY_1] && !upgrade1Pressed) { buyRodUpgrade(); upgrade1Pressed = true; }
+            if (!keys[GLFW_KEY_1]) upgrade1Pressed = false;
+
+            if (keys[GLFW_KEY_2] && !upgrade2Pressed) { buyEngineUpgrade(); upgrade2Pressed = true; }
+            if (!keys[GLFW_KEY_2]) upgrade2Pressed = false;
+
+            if (keys[GLFW_KEY_3] && !upgrade3Pressed) { buyCargoUpgrade(); upgrade3Pressed = true; }
+            if (!keys[GLFW_KEY_3]) upgrade3Pressed = false;
+
+            if (keys[GLFW_KEY_4] && !repairPressed) { repairHull(); repairPressed = true; }
+            if (!keys[GLFW_KEY_4]) repairPressed = false;
         }
         else
         {
+            fishPressed = false;
+            sellPressed = false;
+            upgrade1Pressed = false;
+            upgrade2Pressed = false;
+            upgrade3Pressed = false;
+            repairPressed = false;
+            minigameTogglePressed = false;
             minigameHookPressed = false;
+            gSound.UpdateBoatMotor(0.0f, boat.maxForwardSpeed);
         }
 
-        FishingMinigameResult minigameResult;
-        if (gFishingMinigame.ConsumeResult(minigameResult))
-        {
-            resolveFishingMinigame(window, minigameResult);
-        }
-
-        if (keys[GLFW_KEY_E] && !fishPressed) { tryFishing(window); fishPressed = true; }
-        if (!keys[GLFW_KEY_E]) fishPressed = false;
-
-        if (keys[GLFW_KEY_R] && !sellPressed) { sellCargo(); sellPressed = true; }
-        if (!keys[GLFW_KEY_R]) sellPressed = false;
-
-        if (keys[GLFW_KEY_1] && !upgrade1Pressed) { buyRodUpgrade(); upgrade1Pressed = true; }
-        if (!keys[GLFW_KEY_1]) upgrade1Pressed = false;
-
-        if (keys[GLFW_KEY_2] && !upgrade2Pressed) { buyEngineUpgrade(); upgrade2Pressed = true; }
-        if (!keys[GLFW_KEY_2]) upgrade2Pressed = false;
-
-        if (keys[GLFW_KEY_3] && !upgrade3Pressed) { buyCargoUpgrade(); upgrade3Pressed = true; }
-        if (!keys[GLFW_KEY_3]) upgrade3Pressed = false;
+        updateParticles(deltaTime);
+        spawnLostIslandAuraParticles();
+        spawnZoneAmbientParticles(currentFrame);
 
         std::stringstream title;
         title << "Dredge-style Fishing Prototype | Zone: " << getCurrentZoneName()
               << " | Gold: " << totalMoney
               << " | Cargo: " << cargo.size() << "/" << cargoCapacity << " (" << getCargoValue() << "g)"
               << " | Rod: " << rodLevel
+              << " | Hull: " << static_cast<int>(std::round(hullIntegrity)) << "%"
               << " | Speed: " << std::fixed << std::setprecision(1) << boat.velocity;
 
         const char* postLabel = "None";
@@ -1766,11 +2406,15 @@ int main()
         title << " | PP: " << postLabel
               << " | MiniGame: " << (gFishingMinigame.IsEnabled() ? (gFishingMinigame.IsActive() ? "Active" : "On") : "Off")
               << " | Quest: " << gIslandQuest.GetQuestSummary();
+        if (!gGameStarted) title << " | PRESS ENTER TO START";
+        if (gPaused) title << " | PAUSED";
+        if (gJournalOpen) title << " | JOURNAL";
         if (isAtDock())
         {
             title << " | Sell[R] | Rod[1:" << rodUpgradeCost() << "g]"
                   << " | Engine[2:" << engineUpgradeCost() << "g]"
-                  << " | Cargo[3:" << cargoUpgradeCost() << "g]";
+                  << " | Cargo[3:" << cargoUpgradeCost() << "g]"
+                  << " | Repair[4:" << getRepairCost() << "g]";
         }
         else
         {
@@ -1786,6 +2430,16 @@ int main()
 
         glm::vec3 fogColor = getEffectiveFogColor();
         glm::vec3 clearColor = glm::mix(fogColor, glm::vec3(0.95f, 0.90f, 0.78f), catchFlashTimer * 0.4f);
+        if (hullWarningTimer > 0.0f)
+        {
+            const float dangerPulse = 0.16f + 0.10f * std::sin(currentFrame * 12.0f);
+            clearColor = glm::mix(clearColor, glm::vec3(0.80f, 0.18f, 0.12f), dangerPulse);
+        }
+        if (gIslandQuest.HasWon())
+        {
+            const float winGlow = 0.14f + 0.06f * std::sin(currentFrame * 3.5f);
+            clearColor = glm::mix(clearColor, glm::vec3(0.96f, 0.86f, 0.46f), winGlow);
+        }
         glClearColor(clearColor.r, clearColor.g, clearColor.b, 1.0f);
 
         glm::vec3 cameraPos = getCameraPosition();
@@ -1820,31 +2474,85 @@ int main()
         hud.screenHeight = gWindowHeight;
         hud.zoneName = gIslandQuest.HasWon() ? "Lost Island" : getCurrentZoneName();
         hud.statusText = lastCatchText;
+        hud.questSummary = gIslandQuest.GetQuestSummary();
         hud.gold = totalMoney;
         hud.cargoCount = static_cast<int>(cargo.size());
         hud.cargoCapacity = cargoCapacity;
         hud.cargoValue = getCargoValue();
         hud.rodLevel = rodLevel;
         hud.engineLevel = engineLevel;
+        hud.rodUpgradeCost = rodUpgradeCost();
+        hud.engineUpgradeCost = engineUpgradeCost();
+        hud.cargoUpgradeCost = cargoUpgradeCost();
+        hud.keysCollected = gIslandQuest.GetCollectedKeyCount();
+        hud.keysTotal = 3;
+        hud.repairCost = getRepairCost();
+        hud.hullIntegrity = hullIntegrity;
+        hud.hullCritical = hullIntegrity < 35.0f;
         hud.speed = std::abs(boat.velocity);
         hud.danger = getWorldDanger();
         hud.atDock = isAtDock();
+        hud.minigameEnabled = gFishingMinigame.IsEnabled();
+        hud.minigameActive = gFishingMinigame.IsActive();
+        hud.goalIslandUnlocked = gIslandQuest.IsGoalIslandUnlocked();
+        hud.hasWon = gIslandQuest.HasWon();
         hud.messageTimer = catchMessageTimer;
         hud.flash = catchFlashTimer;
+        hud.caughtFishName = gLastCaughtFishName;
+        hud.caughtFishRarity = gLastCaughtFishRarity;
+        hud.caughtFishTexture = gLastCaughtFishTexture;
+        hud.caughtFishTextureWidth = gLastCaughtFishTextureWidth;
+        hud.caughtFishTextureHeight = gLastCaughtFishTextureHeight;
+        hud.showCaughtFishCard = (gCaughtFishCardTimer > 0.0f);
+        hud.fishTextureMissing = gLastCaughtFishTextureMissing;
+        hud.totalFishCaught = gTotalFishCaught;
+        hud.totalGoldEarned = gTotalGoldEarned;
+        hud.totalCargoSold = gTotalCargoSold;
+        hud.perfectHooks = gPerfectHooks;
+        hud.totalPlayTimeSeconds = gSessionPlayTime;
+        hud.showStartScreen = !gGameStarted;
+        hud.showPauseScreen = gPaused;
+        hud.showJournal = gJournalOpen;
+        hud.showVictoryScreen = gIslandQuest.HasWon();
+        hud.journalPageCount = GetJournalPageCount();
+        gJournalPage = std::max(0, std::min(gJournalPage, hud.journalPageCount - 1));
+        hud.journalPage = gJournalPage;
+        hud.journalEntries = BuildJournalPageEntries(gJournalPage);
+        hud.catchBannerText = gCatchBannerText;
+        hud.catchBannerTimer = gCatchBannerTimer;
         if (gFishingMinigame.IsActive())
         {
             hud.hintText = gFishingMinigame.GetHintText() + " | " + gIslandQuest.GetQuestSummary();
             hud.statusText = gFishingMinigame.GetStatusText();
             hud.messageTimer = 999.0f;
             hud.flash = 0.0f;
+            hud.showCaughtFishCard = false;
+        }
+        if (hud.showStartScreen || hud.showPauseScreen || hud.showJournal)
+        {
+            hud.showCaughtFishCard = false;
         }
         else if (hud.atDock)
         {
-            hud.hintText = "SELL:R  ROD:1  ENGINE:2  CARGO:3  G +1000  M MINIGAME  | " + gIslandQuest.GetQuestSummary();
+            hud.hintText = "SELL:R  ROD:1(" + std::to_string(hud.rodUpgradeCost) + "G)  ENGINE:2(" + std::to_string(hud.engineUpgradeCost) + "G)  CARGO:3(" + std::to_string(hud.cargoUpgradeCost) + "G)  REPAIR:4(" + std::to_string(hud.repairCost) + "G)  J JOURNAL  P HELP";
+        }
+        else if (hud.hasWon)
+        {
+            hud.hintText = "THE LOST ISLAND HAS BEEN REACHED  J JOURNAL  P HELP";
+        }
+        else if (hud.goalIslandUnlocked)
+        {
+            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  J JOURNAL  P HELP  SAIL TO THE LOST ISLAND" + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
         }
         else
         {
-            hud.hintText = "CURRENT SPEED " + std::to_string(static_cast<int>(std::abs(boat.velocity))) + " | M MINIGAME | G +1000 | " + gIslandQuest.GetQuestSummary();
+            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  J JOURNAL  P HELP  KEYS " + std::to_string(hud.keysCollected) + "/" + std::to_string(hud.keysTotal) + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
+        }
+        if (!gGameStarted)
+        {
+            hud.hintText = "PRESS ENTER TO START";
+            hud.statusText = "FIND 3 KEYS AND REACH THE LOST ISLAND";
+            hud.messageTimer = 999.0f;
         }
         RenderUIOverlay(hud);
 
@@ -1855,6 +2563,15 @@ int main()
     if (boatModel.vao != 0) glDeleteVertexArrays(1, &boatModel.vao);
     if (swordModel.vbo != 0) glDeleteBuffers(1, &swordModel.vbo);
     if (swordModel.vao != 0) glDeleteVertexArrays(1, &swordModel.vao);
+
+    for (auto& entry : gFishIconTextures)
+    {
+        if (entry.second.texture != 0)
+        {
+            glDeleteTextures(1, &entry.second.texture);
+            entry.second.texture = 0;
+        }
+    }
 
     gPostProcessor.Shutdown();
     ShutdownUIOverlay();

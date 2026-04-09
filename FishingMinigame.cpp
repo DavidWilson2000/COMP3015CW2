@@ -5,7 +5,6 @@
 #include <cstdlib>
 #include <sstream>
 
-
 namespace
 {
     float Clamp01(float value)
@@ -14,10 +13,27 @@ namespace
         if (value > 1.0f) return 1.0f;
         return value;
     }
+
+    float ClampRange(float value, float minValue, float maxValue)
+    {
+        if (value < minValue) return minValue;
+        if (value > maxValue) return maxValue;
+        return value;
+    }
+
+    const char* RarityName(int rarity)
+    {
+        switch (rarity)
+        {
+        case 1: return "UNCOMMON";
+        case 2: return "RARE";
+        case 3: return "LEGENDARY";
+        default: return "COMMON";
+        }
+    }
 }
 
 FishingMinigame::FishingMinigame() = default;
-
 
 void FishingMinigame::ToggleEnabled()
 {
@@ -38,21 +54,33 @@ bool FishingMinigame::IsActive() const
     return m_active;
 }
 
-void FishingMinigame::Start()
+void FishingMinigame::Start(int rodLevel, int fishRarity)
 {
     if (!m_enabled) return;
 
     m_active = true;
     m_hasPendingResult = false;
     m_marker = 0.0f;
-    m_markerVelocity = 0.8f;
-    m_totalDuration = 3.5f;
-    m_timeRemaining = m_totalDuration;
+
+    m_rodLevel = std::max(1, rodLevel);
+    m_fishRarity = std::max(0, std::min(3, fishRarity));
+
+    const float rodEase = Clamp01(static_cast<float>(m_rodLevel - 1) / 9.0f);
+    const float rarityHardness = static_cast<float>(m_fishRarity) / 3.0f;
 
     const float random01 = static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
     const float randomWidth = static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
-    m_targetCenter = 0.22f + random01 * 0.56f;
-    m_targetHalfWidth = 0.10f + randomWidth * 0.07f;
+
+    const float baseSpeed = 1.18f - rodEase * 0.45f + rarityHardness * 0.42f;
+    const float baseHalfWidth = 0.075f + rodEase * 0.085f - rarityHardness * 0.030f;
+    const float baseDuration = 3.10f + rodEase * 0.55f - rarityHardness * 0.35f;
+
+    m_markerVelocity = ClampRange(baseSpeed, 0.45f, 1.45f);
+    m_totalDuration = ClampRange(baseDuration, 2.40f, 4.20f);
+    m_timeRemaining = m_totalDuration;
+
+    m_targetCenter = 0.18f + random01 * 0.64f;
+    m_targetHalfWidth = ClampRange(baseHalfWidth + (randomWidth - 0.5f) * 0.020f, 0.050f, 0.220f);
 }
 
 void FishingMinigame::Cancel()
@@ -98,7 +126,6 @@ void FishingMinigame::Hook()
     if (success)
     {
         QueueResult(true, perfect, timingScore, perfect ? "Perfect hook!" : "Good hook!");
-  
     }
     else
     {
@@ -119,7 +146,7 @@ std::string FishingMinigame::GetHintText() const
 {
     if (!m_enabled) return "MINIGAME OFF | PRESS M TO ENABLE";
     if (!m_active) return "MINIGAME ON | PRESS E TO START | SPACE TO HOOK";
-    return "HOOK WITH SPACE INSIDE THE O ZONE";
+    return "SPACE TO HOOK | BIGGER ROD = BIGGER TARGET | RARER FISH = FASTER";
 }
 
 std::string FishingMinigame::GetStatusText() const
@@ -143,7 +170,9 @@ std::string FishingMinigame::GetStatusText() const
     bar[markerIndex] = '|';
 
     std::stringstream ss;
-    ss << "HOOK " << '[' << bar << ']' << " TIME " << static_cast<int>(std::ceil(m_timeRemaining));
+    ss << "HOOK " << '[' << bar << ']'
+       << " TIME " << static_cast<int>(std::ceil(m_timeRemaining))
+       << " " << RarityName(m_fishRarity);
     return ss.str();
 }
 
