@@ -28,6 +28,7 @@
 #include "SoundManager.h"
 #include "IslandQuest.h"
 #include "LostIslandSetpiece.h"
+#include "WorldGen.h"
 
 
 const unsigned int SCR_WIDTH = 1280;
@@ -68,6 +69,7 @@ bool minigameTogglePressed = false;
 bool minigameHookPressed = false;
 bool shadowModeTogglePressed = false;
 bool sunCycleTogglePressed = false;
+bool cameraModeTogglePressed = false;
 
 struct ModelMesh
 {
@@ -77,30 +79,6 @@ struct ModelMesh
     bool loaded = false;
 };
 
-struct FishData
-{
-    std::string name;
-    int rarity; // 0 common, 1 uncommon, 2 rare, 3 legendary
-    int value;
-};
-
-struct FishZone
-{
-    glm::vec3 center;
-    float radius;
-    std::vector<FishData> fishPool;
-    glm::vec3 tint;
-    glm::vec3 fogColor;
-    float fogNear;
-    float fogFar;
-    float danger;
-    std::string zoneName;
-
-    bool contains(const glm::vec3& pos) const
-    {
-        return glm::length(glm::vec2(pos.x - center.x, pos.z - center.z)) <= radius;
-    }
-};
 
 struct CargoItem
 {
@@ -196,6 +174,12 @@ enum class ShadowFilterMode
     PCSS = 1
 };
 
+enum class CameraMode
+{
+    Follow = 0,
+    FreeLook = 1
+};
+
 struct Particle
 {
     glm::vec3 position{0.0f};
@@ -224,6 +208,7 @@ enum MaterialType
 
 Boat boat;
 std::vector<FishZone> zones;
+std::vector<WorldIsland> gWorldIslands;
 std::vector<CargoItem> cargo;
 std::vector<Particle> particles(MAX_PARTICLES);
 
@@ -317,6 +302,10 @@ PostProcessor gPostProcessor;
 PostProcessMode gPostMode = PostProcessMode::None;
 ShadowFilterMode gShadowFilterMode = ShadowFilterMode::PCSS;
 bool gAnimateSunCycle = true;
+CameraMode gCameraMode = CameraMode::Follow;
+float gFreeLookYawOffset = 0.0f;
+float gFreeLookPitch = 30.0f;
+float gFreeLookDistance = 9.0f;
 
 GLuint shadowFBO = 0;
 GLuint shadowMap = 0;
@@ -479,6 +468,7 @@ void key_callback(GLFWwindow* window, int key, int, int action, int)
         if (key == GLFW_KEY_F6) gPostMode = PostProcessMode::Blur;
         if (key == GLFW_KEY_F7) gPostMode = PostProcessMode::NightVision;
         if (key == GLFW_KEY_F8) gPostMode = PostProcessMode::None;
+        if (key == GLFW_KEY_F11) gPostMode = PostProcessMode::GodRays;
     }
 
     if (key >= 0 && key < 1024)
@@ -1067,19 +1057,11 @@ void setupShadowMap()
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void setupZones()
+void setupWorldLayout()
 {
-    zones.push_back({ glm::vec3(12.0f, 0.0f, 10.0f), 6.5f,
-        { {"Sardine",0,5}, {"Mackerel",0,6}, {"Crab",1,11} },
-        glm::vec3(0.18f, 0.55f, 0.35f), glm::vec3(0.72f, 0.82f, 0.92f), 16.0f, 66.0f, 0.2f, "Harbour Waters" });
-
-    zones.push_back({ glm::vec3(-18.0f, 0.0f, -10.0f), 8.5f,
-        { {"Snapper",0,8}, {"Lionfish",2,20}, {"Eel",2,25}, {"Grouper",1,13} },
-        glm::vec3(0.10f, 0.60f, 0.55f), glm::vec3(0.58f, 0.78f, 0.78f), 13.0f, 53.0f, 0.45f, "Reef Edge" });
-
-    zones.push_back({ glm::vec3(23.0f, 0.0f, -23.0f), 10.0f,
-        { {"Anglerfish",2,30}, {"Oarfish",3,60}, {"Ghost Fish",3,100}, {"Black Cod",1,18} },
-        glm::vec3(0.35f, 0.18f, 0.55f), glm::vec3(0.36f, 0.42f, 0.58f), 9.0f, 36.0f, 0.8f, "Deep Trench" });
+    WorldLayout layout = BuildDefaultWorldLayout();
+    zones = layout.zones;
+    gWorldIslands = layout.islands;
 }
 
 const FishZone* getCurrentZone()
@@ -1227,6 +1209,11 @@ const char* GetSunCycleLabel()
     return gAnimateSunCycle ? "Cycle" : "Fixed";
 }
 
+const char* GetCameraModeLabel()
+{
+    return gCameraMode == CameraMode::FreeLook ? "FreeLook" : "Follow";
+}
+
 SunState EvaluateSunState(float time)
 {
     SunState sun;
@@ -1258,11 +1245,34 @@ SunState EvaluateSunState(float time)
     return sun;
 }
 
+glm::vec3 getCameraTarget()
+{
+    return boat.position + glm::vec3(0.0f, 0.9f, 0.0f);
+}
+
 glm::vec3 getCameraPosition()
 {
-    float radians = glm::radians(boat.rotationY);
-    glm::vec3 behind(-std::sin(radians), 0.0f, -std::cos(radians));
-    glm::vec3 cameraPos = boat.position + behind * 8.0f + glm::vec3(0.0f, 5.25f, 0.0f);
+    glm::vec3 cameraPos(0.0f);
+
+    if (gCameraMode == CameraMode::FreeLook)
+    {
+        const glm::vec3 target = getCameraTarget();
+        const float yaw = glm::radians(boat.rotationY + 180.0f + gFreeLookYawOffset);
+        const float pitch = glm::radians(gFreeLookPitch);
+
+        glm::vec3 orbitOffset(
+            std::sin(yaw) * std::cos(pitch),
+            std::sin(pitch),
+            std::cos(yaw) * std::cos(pitch));
+
+        cameraPos = target + orbitOffset * gFreeLookDistance;
+    }
+    else
+    {
+        const float radians = glm::radians(boat.rotationY);
+        const glm::vec3 behind(-std::sin(radians), 0.0f, -std::cos(radians));
+        cameraPos = boat.position + behind * 8.0f + glm::vec3(0.0f, 5.25f, 0.0f);
+    }
 
     if (gCameraShakeTimer > 0.0f)
     {
@@ -1824,6 +1834,25 @@ void bindMaterial(GLuint shader, GLuint textureID, int materialType, float tilin
     setFloat(shader, "uvTiling", tiling);
 }
 
+void bindWorldPieceMaterial(GLuint shader, const WorldRenderPiece& piece)
+{
+    switch (piece.material)
+    {
+    case WorldMaterial::Rock:
+        bindMaterial(shader, rockTex, MAT_ROCK, piece.texScale);
+        break;
+    case WorldMaterial::Grass:
+        bindMaterial(shader, grassTex, MAT_GRASS, piece.texScale);
+        break;
+    case WorldMaterial::Wood:
+        bindMaterial(shader, woodTex, MAT_WOOD, piece.texScale);
+        break;
+    case WorldMaterial::Light:
+        bindMaterial(shader, boatTex, MAT_LIGHT, piece.texScale);
+        break;
+    }
+}
+
 void drawCube(GLuint shader, const glm::mat4& model)
 {
     setMat4(shader, "model", model);
@@ -1911,50 +1940,16 @@ void renderWorldGeometry(GLuint shader, bool depthPass, float time)
         drawCube(shader, crate3);
     }
 
-    // Islands layered
-    std::vector<glm::vec3> islandPositions = {
-        glm::vec3(12.0f, 0.35f, 10.0f),
-        glm::vec3(-18.0f, 0.35f, -10.0f),
-        glm::vec3(23.0f, 0.35f, -23.0f),
-        glm::vec3(-10.0f, 0.35f, 18.0f)
-    };
-
-    for (size_t i = 0; i < islandPositions.size(); ++i)
+    // Procedural world islands and biome setpieces
+    for (const auto& island : gWorldIslands)
     {
-        glm::vec3 pos = islandPositions[i];
-        setMat(rockTex, MAT_ROCK, 2.7f);
-        for (int layer = 0; layer < 3; ++layer)
+        for (const auto& piece : island.pieces)
         {
-            glm::mat4 rock(1.0f);
-            rock = glm::translate(rock, pos + glm::vec3(0.25f * layer, layer * 0.35f, -0.15f * layer));
-            rock = glm::scale(rock, glm::vec3(4.4f - layer * 0.9f, 0.9f, 4.0f - layer * 0.7f));
-            drawCube(shader, rock);
-        }
-
-        setMat(grassTex, MAT_GRASS, 3.0f);
-        glm::mat4 grass(1.0f);
-        grass = glm::translate(grass, pos + glm::vec3(0.1f, 1.15f, 0.0f));
-        grass = glm::scale(grass, glm::vec3(2.9f, 0.32f, 2.5f));
-        drawCube(shader, grass);
-
-        // simple palms/masts
-        setMat(woodTex, MAT_WOOD, 1.0f);
-        for (int trunk = 0; trunk < 2; ++trunk)
-        {
-            glm::mat4 t(1.0f);
-            float xoff = trunk == 0 ? -0.6f : 0.65f;
-            float zoff = trunk == 0 ? 0.55f : -0.5f;
-            t = glm::translate(t, pos + glm::vec3(xoff, 2.1f, zoff));
-            t = glm::rotate(t, glm::radians(trunk == 0 ? 8.0f : -10.0f), glm::vec3(0, 0, 1));
-            t = glm::scale(t, glm::vec3(0.18f, 2.1f, 0.18f));
-            drawCube(shader, t);
-
-            setMat(grassTex, MAT_GRASS, 1.0f);
-            glm::mat4 leaf(1.0f);
-            leaf = glm::translate(leaf, pos + glm::vec3(xoff, 3.1f, zoff));
-            leaf = glm::rotate(leaf, glm::radians(22.0f + trunk * 18.0f), glm::vec3(0, 1, 0));
-            leaf = glm::scale(leaf, glm::vec3(1.25f, 0.12f, 0.34f));
-            drawCube(shader, leaf);
+            if (!depthPass)
+            {
+                bindWorldPieceMaterial(shader, piece);
+            }
+            drawCube(shader, piece.transform);
         }
     }
 
@@ -2279,7 +2274,7 @@ int main()
     setupSkybox();
     setupParticles();
     setupShadowMap();
-    setupZones();
+    setupWorldLayout();
     RegisterFishJournalEntries();
     initialiseEnvironmentBlend();
 
@@ -2370,6 +2365,20 @@ int main()
         }
         if (!keys[GLFW_KEY_F10]) sunCycleTogglePressed = false;
 
+        if (gGameStarted && keys[GLFW_KEY_C] && !cameraModeTogglePressed)
+        {
+            gCameraMode = (gCameraMode == CameraMode::FreeLook) ? CameraMode::Follow : CameraMode::FreeLook;
+            if (gCameraMode == CameraMode::FreeLook)
+            {
+                gFreeLookYawOffset = 0.0f;
+                gFreeLookPitch = 30.0f;
+                gFreeLookDistance = 9.0f;
+            }
+            cameraModeTogglePressed = true;
+            setCatchMessage(window, std::string("Camera: ") + GetCameraModeLabel(), 1.8f);
+        }
+        if (!keys[GLFW_KEY_C]) cameraModeTogglePressed = false;
+
         if (gJournalOpen && keys[GLFW_KEY_LEFT] && !journalLeftPressed)
         {
             gJournalPage = std::max(0, gJournalPage - 1);
@@ -2388,6 +2397,16 @@ int main()
 
         if (!gameplayBlocked)
         {
+            if (gCameraMode == CameraMode::FreeLook)
+            {
+                const float yawSpeed = 90.0f * deltaTime;
+                const float pitchSpeed = 50.0f * deltaTime;
+                if (keys[GLFW_KEY_LEFT]) gFreeLookYawOffset -= yawSpeed;
+                if (keys[GLFW_KEY_RIGHT]) gFreeLookYawOffset += yawSpeed;
+                if (keys[GLFW_KEY_UP]) gFreeLookPitch = clampf(gFreeLookPitch + pitchSpeed, 10.0f, 65.0f);
+                if (keys[GLFW_KEY_DOWN]) gFreeLookPitch = clampf(gFreeLookPitch - pitchSpeed, 10.0f, 65.0f);
+            }
+
             gSessionPlayTime += deltaTime;
             boat.update(deltaTime);
             updateEnvironmentBlend(deltaTime);
@@ -2499,9 +2518,11 @@ int main()
         if (gPostMode == PostProcessMode::Edge) postLabel = "Edge";
         else if (gPostMode == PostProcessMode::Blur) postLabel = "Blur";
         else if (gPostMode == PostProcessMode::NightVision) postLabel = "NightVision";
+        else if (gPostMode == PostProcessMode::GodRays) postLabel = "GodRays";
         title << " | PP: " << postLabel
               << " | Shadows: " << GetShadowFilterLabel()
               << " | Sun: " << GetSunCycleLabel()
+              << " | Camera: " << GetCameraModeLabel()
               << " | MiniGame: " << (gFishingMinigame.IsEnabled() ? (gFishingMinigame.IsActive() ? "Active" : "On") : "Off")
               << " | Quest: " << gIslandQuest.GetQuestSummary();
         if (!gGameStarted) title << " | PRESS ENTER TO START";
@@ -2543,8 +2564,9 @@ int main()
         }
         glClearColor(clearColor.r, clearColor.g, clearColor.b, 1.0f);
 
+        glm::vec3 cameraTarget = getCameraTarget();
         glm::vec3 cameraPos = getCameraPosition();
-        glm::mat4 view = glm::lookAt(cameraPos, boat.position + glm::vec3(0.0f, 0.9f, 0.0f), glm::vec3(0, 1, 0));
+        glm::mat4 view = glm::lookAt(cameraPos, cameraTarget, glm::vec3(0, 1, 0));
         gPostProcessor.EnsureSize(gWindowWidth, gWindowHeight);
 
         glm::mat4 projection = glm::perspective(glm::radians(60.0f), static_cast<float>(gWindowWidth) / static_cast<float>(std::max(gWindowHeight, 1)), 0.1f, 500.0f);
@@ -2570,7 +2592,20 @@ int main()
 
         glViewport(0, 0, gWindowWidth, gWindowHeight);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        gPostProcessor.Render(gPostMode, currentFrame);
+        glm::vec3 cameraForward = glm::normalize(cameraTarget - cameraPos);
+        glm::vec3 sunWorldPos = cameraPos + sun.direction * 250.0f;
+        glm::vec4 sunClip = projection * view * glm::vec4(sunWorldPos, 1.0f);
+        glm::vec2 sunScreenPos(0.5f, 1.2f);
+        float sunVisibility = 0.0f;
+        if (sunClip.w > 0.001f)
+        {
+            glm::vec3 sunNdc = glm::vec3(sunClip) / sunClip.w;
+            sunScreenPos = glm::vec2(sunNdc.x * 0.5f + 0.5f, sunNdc.y * 0.5f + 0.5f);
+            const float onScreen = 1.0f - saturatef(std::max(std::abs(sunNdc.x), std::abs(sunNdc.y)) - 0.85f);
+            const float forwardness = saturatef((glm::dot(cameraForward, sun.direction) - 0.02f) / 0.20f);
+            sunVisibility = saturatef(onScreen) * forwardness * sun.dayFactor;
+        }
+        gPostProcessor.Render(gPostMode, currentFrame, sunScreenPos, sun.color, sunVisibility, sun.dayFactor);
 
         HUDState hud;
         hud.screenWidth = gWindowWidth;
@@ -2637,19 +2672,19 @@ int main()
         }
         else if (hud.atDock)
         {
-            hud.hintText = "SELL:R  ROD:1(" + std::to_string(hud.rodUpgradeCost) + "G)  ENGINE:2(" + std::to_string(hud.engineUpgradeCost) + "G)  CARGO:3(" + std::to_string(hud.cargoUpgradeCost) + "G)  REPAIR:4(" + std::to_string(hud.repairCost) + "G)  F9 SHADOW  F10 SUN";
+            hud.hintText = "SELL:R  ROD:1(" + std::to_string(hud.rodUpgradeCost) + "G)  ENGINE:2(" + std::to_string(hud.engineUpgradeCost) + "G)  CARGO:3(" + std::to_string(hud.cargoUpgradeCost) + "G)  REPAIR:4(" + std::to_string(hud.repairCost) + "G)  C:" + std::string(GetCameraModeLabel()) + (gCameraMode == CameraMode::FreeLook ? std::string(" ARROWS LOOK") : std::string(""));
         }
         else if (hud.hasWon)
         {
-            hud.hintText = "THE LOST ISLAND HAS BEEN REACHED  F9 SHADOW  F10 SUN";
+            hud.hintText = "THE LOST ISLAND HAS BEEN REACHED  C:" + std::string(GetCameraModeLabel()) + (gCameraMode == CameraMode::FreeLook ? std::string(" ARROWS LOOK") : std::string(""));
         }
         else if (hud.goalIslandUnlocked)
         {
-            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  F9:" + std::string(GetShadowFilterLabel()) + "  F10:" + std::string(GetSunCycleLabel()) + "  SAIL TO THE LOST ISLAND" + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
+            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  C:" + std::string(GetCameraModeLabel()) + (gCameraMode == CameraMode::FreeLook ? std::string(" ARROWS LOOK") : std::string("")) + "  SAIL TO THE LOST ISLAND" + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
         }
         else
         {
-            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  F9:" + std::string(GetShadowFilterLabel()) + "  F10:" + std::string(GetSunCycleLabel()) + "  KEYS " + std::to_string(hud.keysCollected) + "/" + std::to_string(hud.keysTotal) + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
+            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  C:" + std::string(GetCameraModeLabel()) + (gCameraMode == CameraMode::FreeLook ? std::string(" ARROWS LOOK") : std::string("")) + "  KEYS " + std::to_string(hud.keysCollected) + "/" + std::to_string(hud.keysTotal) + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
         }
         if (!gGameStarted)
         {

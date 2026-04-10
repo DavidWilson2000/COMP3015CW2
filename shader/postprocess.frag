@@ -6,6 +6,10 @@ uniform sampler2D sceneTex;
 uniform int mode;
 uniform vec2 texelSize;
 uniform float time;
+uniform vec2 sunScreenPos;
+uniform vec3 sunColor;
+uniform float sunVisibility;
+uniform float dayFactor;
 
 float luminance(vec3 c)
 {
@@ -80,6 +84,50 @@ vec3 nightVision(vec2 uv)
     return green;
 }
 
+vec3 godRays(vec2 uv)
+{
+    vec3 base = sampleScene(uv);
+    if (sunVisibility <= 0.001 || dayFactor <= 0.001)
+        return base;
+
+    vec2 toSun = sunScreenPos - uv;
+    float sunDist = length(toSun);
+    vec2 dir = toSun / max(sunDist, 0.0001);
+
+    const int NUM_SAMPLES = 36;
+    float density = mix(0.72, 0.94, dayFactor);
+    float decay = 0.955;
+    float weight = 0.23;
+    float exposure = mix(0.11, 0.18, dayFactor) * sunVisibility;
+
+    vec2 stepUV = dir * sunDist * density / float(NUM_SAMPLES);
+    vec2 sampleUV = uv;
+    float illuminationDecay = 1.0;
+    vec3 accum = vec3(0.0);
+
+    for (int i = 0; i < NUM_SAMPLES; ++i)
+    {
+        sampleUV += stepUV;
+        vec3 sampleColor = sampleScene(clamp(sampleUV, vec2(0.001), vec2(0.999)));
+        float lum = luminance(sampleColor);
+        float brightMask = smoothstep(0.62, 1.05, lum);
+        float warmMask = smoothstep(0.55, 0.95, dot(normalize(sampleColor + vec3(0.0001)), normalize(sunColor + vec3(0.0001))));
+        float source = mix(brightMask, brightMask * warmMask, 0.45);
+        accum += sampleColor * source * illuminationDecay * weight;
+        illuminationDecay *= decay;
+    }
+
+    float radialCenter = smoothstep(1.15, 0.08, sunDist);
+    float radialWide = smoothstep(1.45, 0.18, sunDist);
+    vec3 shaftTint = mix(vec3(1.0), sunColor, 0.72);
+    vec3 shafts = accum * shaftTint;
+    shafts += shaftTint * radialCenter * 0.18 * sunVisibility;
+
+    vec3 color = base + shafts * exposure * radialWide;
+    color += shaftTint * pow(max(1.0 - sunDist * 1.35, 0.0), 8.0) * 0.12 * sunVisibility;
+    return color;
+}
+
 void main()
 {
     vec3 color = sampleScene(TexCoord);
@@ -90,6 +138,8 @@ void main()
         color = gaussianBlur(TexCoord);
     else if (mode == 3)
         color = nightVision(TexCoord);
+    else if (mode == 4)
+        color = godRays(TexCoord);
 
     FragColor = vec4(color, 1.0);
 }

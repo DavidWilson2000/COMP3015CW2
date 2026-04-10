@@ -9,7 +9,8 @@ enum class PostProcessMode
     None = 0,
     Edge = 1,
     Blur = 2,
-    NightVision = 3
+    NightVision = 3,
+    GodRays = 4
 };
 
 class PostProcessor
@@ -20,6 +21,7 @@ public:
     void EnsureSize(int width, int height);
     void BeginScene(const glm::vec3& clearColor);
     void EndScene();
+    void Render(PostProcessMode mode, float time, const glm::vec2& sunScreenPos, const glm::vec3& sunColor, float sunVisibility, float dayFactor);
     void Render(PostProcessMode mode, float time);
 
 private:

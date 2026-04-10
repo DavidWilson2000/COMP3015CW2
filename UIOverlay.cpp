@@ -604,9 +604,9 @@ void RenderUIOverlay(const HUDState& state)
         const std::string title = "DREDGE STYLE FISHING PROTOTYPE";
         std::vector<std::pair<std::string, glm::vec4>> lines = {
             {"FIND 3 KEYS AND REACH THE LOST ISLAND", text},
-            {"WASD SAIL   E FISH   M TOGGLE MINIGAME", text},
-            {"R SELL   1 2 3 UPGRADES   4 REPAIR   J JOURNAL", text},
-            {"F9 TOGGLE PCSS   F10 TOGGLE SUN CYCLE", text},
+            {"WASD SAIL   E FISH   C CAMERA   M TOGGLE MINIGAME", text},
+            {"R SELL   1 2 3 UPGRADES   4 REPAIR   ARROWS LOOK IN FREE CAM", text},
+            {"F9 TOGGLE PCSS   F10 TOGGLE SUN CYCLE   F11 GOD RAYS", text},
             {"PRESS ENTER TO START", good}
         };
         DrawOverlayLines(verts, sw, sh, title, lines, glm::vec4(0.02f, 0.05f, 0.09f, 0.92f), accent, 4.0f, 3.0f);
@@ -616,10 +616,10 @@ void RenderUIOverlay(const HUDState& state)
     {
         const std::string title = "PAUSED / HELP";
         std::vector<std::pair<std::string, glm::vec4>> lines = {
-            {"WASD MOVE   E FISH   SPACE HOOK   M MINIGAME", text},
-            {"R SELL   1 2 3 UPGRADES   4 REPAIR", text},
-            {"J JOURNAL   P CLOSE HELP   F5-F10 FX AND LIGHTING", text},
-            {"F9 TOGGLE PCSS   F10 TOGGLE SUN CYCLE", text},
+            {"WASD MOVE   E FISH   SPACE HOOK   C CAMERA   M MINIGAME", text},
+            {"R SELL   1 2 3 UPGRADES   4 REPAIR   ARROWS LOOK IN FREE CAM", text},
+            {"J JOURNAL   P CLOSE HELP   F5-F11 FX AND LIGHTING", text},
+            {"F9 TOGGLE PCSS   F10 TOGGLE SUN CYCLE   F11 GOD RAYS", text},
             {"PRESS P TO RESUME", good}
         };
         DrawOverlayLines(verts, sw, sh, title, lines, glm::vec4(0.02f, 0.05f, 0.09f, 0.92f), outline, 4.0f, 3.0f);
