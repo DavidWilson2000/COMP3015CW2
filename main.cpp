@@ -66,6 +66,8 @@ bool journalLeftPressed = false;
 bool journalRightPressed = false;
 bool minigameTogglePressed = false;
 bool minigameHookPressed = false;
+bool shadowModeTogglePressed = false;
+bool sunCycleTogglePressed = false;
 
 struct ModelMesh
 {
@@ -173,6 +175,26 @@ float clampf(float v, float lo, float hi)
     if (v > hi) return hi;
     return v;
 }
+
+float saturatef(float v)
+{
+    return clampf(v, 0.0f, 1.0f);
+}
+
+struct SunState
+{
+    glm::vec3 direction = glm::normalize(glm::vec3(0.35f, 0.82f, 0.20f));
+    glm::vec3 color = glm::vec3(1.0f, 0.96f, 0.90f);
+    float dayFactor = 1.0f;
+    float intensity = 1.0f;
+    float ambient = 0.42f;
+};
+
+enum class ShadowFilterMode
+{
+    PCF = 0,
+    PCSS = 1
+};
 
 struct Particle
 {
@@ -293,6 +315,8 @@ GLuint skyboxShader = 0;
 
 PostProcessor gPostProcessor;
 PostProcessMode gPostMode = PostProcessMode::None;
+ShadowFilterMode gShadowFilterMode = ShadowFilterMode::PCSS;
+bool gAnimateSunCycle = true;
 
 GLuint shadowFBO = 0;
 GLuint shadowMap = 0;
@@ -1193,6 +1217,47 @@ float getEffectiveFogFar()
     return glm::mix(getZoneFogFar(), 11.0f, getQuestFogFactor());
 }
 
+const char* GetShadowFilterLabel()
+{
+    return gShadowFilterMode == ShadowFilterMode::PCSS ? "PCSS" : "PCF";
+}
+
+const char* GetSunCycleLabel()
+{
+    return gAnimateSunCycle ? "Cycle" : "Fixed";
+}
+
+SunState EvaluateSunState(float time)
+{
+    SunState sun;
+
+    if (!gAnimateSunCycle)
+    {
+        sun.direction = glm::normalize(glm::vec3(0.38f, 0.86f, 0.22f));
+        sun.color = glm::vec3(1.0f, 0.96f, 0.90f);
+        sun.dayFactor = 1.0f;
+        sun.intensity = 1.12f;
+        sun.ambient = 0.42f;
+        return sun;
+    }
+
+    const float cycle = time * 0.16f;
+    const float azimuth = cycle * 0.70f + 0.65f;
+    const float elevation = 0.16f + 0.84f * (0.5f + 0.5f * std::sin(cycle));
+    const float side = 0.28f * std::sin(cycle * 0.47f + 1.1f);
+
+    sun.direction = glm::normalize(glm::vec3(std::cos(azimuth), elevation, std::sin(azimuth) + side));
+    sun.dayFactor = saturatef((elevation - 0.16f) / 0.84f);
+
+    const float warmth = 1.0f - sun.dayFactor;
+    const glm::vec3 dawn = glm::vec3(1.00f, 0.72f, 0.54f);
+    const glm::vec3 noon = glm::vec3(1.00f, 0.97f, 0.90f);
+    sun.color = glm::mix(noon, dawn, warmth * 0.85f);
+    sun.intensity = glm::mix(0.48f, 1.08f, sun.dayFactor);
+    sun.ambient = glm::mix(0.18f, 0.40f, sun.dayFactor);
+    return sun;
+}
+
 glm::vec3 getCameraPosition()
 {
     float radians = glm::radians(boat.rotationY);
@@ -2064,7 +2129,7 @@ void renderDepthPass(const glm::mat4& lightSpaceMatrix, float time)
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void renderSkybox(const glm::mat4& view, const glm::mat4& projection, float time)
+void renderSkybox(const glm::mat4& view, const glm::mat4& projection, const SunState& sun, float time)
 {
     glDepthFunc(GL_LEQUAL);
     glUseProgram(skyboxShader);
@@ -2073,6 +2138,9 @@ void renderSkybox(const glm::mat4& view, const glm::mat4& projection, float time
     setMat4(skyboxShader, "projection", projection);
     setFloat(skyboxShader, "time", time);
     setFloat(skyboxShader, "worldDanger", getWorldDanger());
+    setVec3(skyboxShader, "sunDirection", sun.direction);
+    setVec3(skyboxShader, "sunColor", sun.color);
+    setFloat(skyboxShader, "dayFactor", sun.dayFactor);
     glBindVertexArray(skyboxVAO);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxCubemap);
@@ -2082,13 +2150,19 @@ void renderSkybox(const glm::mat4& view, const glm::mat4& projection, float time
     glDepthFunc(GL_LESS);
 }
 
-void renderWater(const glm::mat4& view, const glm::mat4& projection, const glm::mat4& lightSpaceMatrix, const glm::vec3& lightPos, const glm::vec3& viewPos, float time)
+void renderWater(const glm::mat4& view, const glm::mat4& projection, const glm::mat4& lightSpaceMatrix, const SunState& sun, const glm::vec3& viewPos, float time)
 {
     glUseProgram(waterShader);
     setMat4(waterShader, "view", view);
     setMat4(waterShader, "projection", projection);
     setMat4(waterShader, "lightSpaceMatrix", lightSpaceMatrix);
-    setVec3(waterShader, "lightPos", lightPos);
+    setVec3(waterShader, "sunDirection", sun.direction);
+    setVec3(waterShader, "sunColor", sun.color);
+    setFloat(waterShader, "sunIntensity", sun.intensity);
+    setFloat(waterShader, "ambientStrength", sun.ambient);
+    setInt(waterShader, "shadowFilterMode", static_cast<int>(gShadowFilterMode));
+    setFloat(waterShader, "shadowLightSize", 0.026f);
+    setFloat(waterShader, "shadowSoftnessScale", 12.0f);
     setVec3(waterShader, "viewPos", viewPos);
     setVec3(waterShader, "zoneTint", getZoneWaterTint());
     setVec3(waterShader, "fogColor", getEffectiveFogColor());
@@ -2105,13 +2179,19 @@ void renderWater(const glm::mat4& view, const glm::mat4& projection, const glm::
     drawPlane(waterShader, waterModel);
 }
 
-void renderLitScene(const glm::mat4& view, const glm::mat4& projection, const glm::mat4& lightSpaceMatrix, const glm::vec3& lightPos, const glm::vec3& viewPos, float time)
+void renderLitScene(const glm::mat4& view, const glm::mat4& projection, const glm::mat4& lightSpaceMatrix, const SunState& sun, const glm::vec3& viewPos, float time)
 {
     glUseProgram(basicShader);
     setMat4(basicShader, "view", view);
     setMat4(basicShader, "projection", projection);
     setMat4(basicShader, "lightSpaceMatrix", lightSpaceMatrix);
-    setVec3(basicShader, "lightPos", lightPos);
+    setVec3(basicShader, "sunDirection", sun.direction);
+    setVec3(basicShader, "sunColor", sun.color);
+    setFloat(basicShader, "sunIntensity", sun.intensity);
+    setFloat(basicShader, "ambientStrength", sun.ambient);
+    setInt(basicShader, "shadowFilterMode", static_cast<int>(gShadowFilterMode));
+    setFloat(basicShader, "shadowLightSize", 0.024f);
+    setFloat(basicShader, "shadowSoftnessScale", 18.0f);
     setVec3(basicShader, "viewPos", viewPos);
     setVec3(basicShader, "fogColor", getEffectiveFogColor());
     setFloat(basicShader, "fogNear", getEffectiveFogNear());
@@ -2274,6 +2354,22 @@ int main()
         }
         if (!keys[GLFW_KEY_J]) journalPressed = false;
 
+        if (keys[GLFW_KEY_F9] && !shadowModeTogglePressed)
+        {
+            gShadowFilterMode = (gShadowFilterMode == ShadowFilterMode::PCSS) ? ShadowFilterMode::PCF : ShadowFilterMode::PCSS;
+            shadowModeTogglePressed = true;
+            setCatchMessage(window, std::string("Shadow filter: ") + GetShadowFilterLabel(), 1.8f);
+        }
+        if (!keys[GLFW_KEY_F9]) shadowModeTogglePressed = false;
+
+        if (keys[GLFW_KEY_F10] && !sunCycleTogglePressed)
+        {
+            gAnimateSunCycle = !gAnimateSunCycle;
+            sunCycleTogglePressed = true;
+            setCatchMessage(window, std::string("Sun cycle: ") + GetSunCycleLabel(), 1.8f);
+        }
+        if (!keys[GLFW_KEY_F10]) sunCycleTogglePressed = false;
+
         if (gJournalOpen && keys[GLFW_KEY_LEFT] && !journalLeftPressed)
         {
             gJournalPage = std::max(0, gJournalPage - 1);
@@ -2404,6 +2500,8 @@ int main()
         else if (gPostMode == PostProcessMode::Blur) postLabel = "Blur";
         else if (gPostMode == PostProcessMode::NightVision) postLabel = "NightVision";
         title << " | PP: " << postLabel
+              << " | Shadows: " << GetShadowFilterLabel()
+              << " | Sun: " << GetSunCycleLabel()
               << " | MiniGame: " << (gFishingMinigame.IsEnabled() ? (gFishingMinigame.IsActive() ? "Active" : "On") : "Off")
               << " | Quest: " << gIslandQuest.GetQuestSummary();
         if (!gGameStarted) title << " | PRESS ENTER TO START";
@@ -2428,8 +2526,11 @@ int main()
 
         glfwSetWindowTitle(window, title.str().c_str());
 
+        const SunState sun = EvaluateSunState(currentFrame);
         glm::vec3 fogColor = getEffectiveFogColor();
-        glm::vec3 clearColor = glm::mix(fogColor, glm::vec3(0.95f, 0.90f, 0.78f), catchFlashTimer * 0.4f);
+        glm::vec3 clearColor = glm::mix(fogColor * glm::mix(0.44f, 1.0f, sun.dayFactor), fogColor, 0.58f + sun.dayFactor * 0.26f);
+        clearColor = glm::mix(clearColor, sun.color * glm::vec3(0.96f, 0.84f, 0.68f), (1.0f - sun.dayFactor) * 0.18f);
+        clearColor = glm::mix(clearColor, glm::vec3(0.95f, 0.90f, 0.78f), catchFlashTimer * 0.4f);
         if (hullWarningTimer > 0.0f)
         {
             const float dangerPulse = 0.16f + 0.10f * std::sin(currentFrame * 12.0f);
@@ -2448,9 +2549,11 @@ int main()
 
         glm::mat4 projection = glm::perspective(glm::radians(60.0f), static_cast<float>(gWindowWidth) / static_cast<float>(std::max(gWindowHeight, 1)), 0.1f, 500.0f);
 
-        glm::vec3 lightPos(18.0f, 26.0f, 12.0f);
-        glm::mat4 lightProjection = glm::ortho(-65.0f, 65.0f, -65.0f, 65.0f, 1.0f, 100.0f);
-        glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0, 1, 0));
+        const glm::vec3 lightTarget = boat.position + glm::vec3(0.0f, 0.8f, 0.0f);
+        const float sunDistance = 52.0f;
+        glm::vec3 lightPos = lightTarget + sun.direction * sunDistance;
+        glm::mat4 lightProjection = glm::ortho(-42.0f, 42.0f, -42.0f, 42.0f, 1.0f, 120.0f);
+        glm::mat4 lightView = glm::lookAt(lightPos, lightTarget, glm::vec3(0, 1, 0));
         glm::mat4 lightSpaceMatrix = lightProjection * lightView;
 
         renderDepthPass(lightSpaceMatrix, currentFrame);
@@ -2459,9 +2562,9 @@ int main()
         glViewport(0, 0, gWindowWidth, gWindowHeight);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        renderSkybox(view, projection, currentFrame);
-        renderWater(view, projection, lightSpaceMatrix, lightPos, cameraPos, currentFrame);
-        renderLitScene(view, projection, lightSpaceMatrix, lightPos, cameraPos, currentFrame);
+        renderSkybox(view, projection, sun, currentFrame);
+        renderWater(view, projection, lightSpaceMatrix, sun, cameraPos, currentFrame);
+        renderLitScene(view, projection, lightSpaceMatrix, sun, cameraPos, currentFrame);
         renderParticles(view, projection);
         gPostProcessor.EndScene();
 
@@ -2534,19 +2637,19 @@ int main()
         }
         else if (hud.atDock)
         {
-            hud.hintText = "SELL:R  ROD:1(" + std::to_string(hud.rodUpgradeCost) + "G)  ENGINE:2(" + std::to_string(hud.engineUpgradeCost) + "G)  CARGO:3(" + std::to_string(hud.cargoUpgradeCost) + "G)  REPAIR:4(" + std::to_string(hud.repairCost) + "G)  J JOURNAL  P HELP";
+            hud.hintText = "SELL:R  ROD:1(" + std::to_string(hud.rodUpgradeCost) + "G)  ENGINE:2(" + std::to_string(hud.engineUpgradeCost) + "G)  CARGO:3(" + std::to_string(hud.cargoUpgradeCost) + "G)  REPAIR:4(" + std::to_string(hud.repairCost) + "G)  F9 SHADOW  F10 SUN";
         }
         else if (hud.hasWon)
         {
-            hud.hintText = "THE LOST ISLAND HAS BEEN REACHED  J JOURNAL  P HELP";
+            hud.hintText = "THE LOST ISLAND HAS BEEN REACHED  F9 SHADOW  F10 SUN";
         }
         else if (hud.goalIslandUnlocked)
         {
-            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  J JOURNAL  P HELP  SAIL TO THE LOST ISLAND" + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
+            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  F9:" + std::string(GetShadowFilterLabel()) + "  F10:" + std::string(GetSunCycleLabel()) + "  SAIL TO THE LOST ISLAND" + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
         }
         else
         {
-            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  J JOURNAL  P HELP  KEYS " + std::to_string(hud.keysCollected) + "/" + std::to_string(hud.keysTotal) + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
+            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  F9:" + std::string(GetShadowFilterLabel()) + "  F10:" + std::string(GetSunCycleLabel()) + "  KEYS " + std::to_string(hud.keysCollected) + "/" + std::to_string(hud.keysTotal) + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
         }
         if (!gGameStarted)
         {

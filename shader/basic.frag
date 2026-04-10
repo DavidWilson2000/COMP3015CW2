@@ -9,12 +9,29 @@ out vec4 FragColor;
 uniform sampler2D materialTex;
 uniform sampler2D shadowMap;
 uniform int materialType;
-uniform vec3 lightPos;
+uniform int shadowFilterMode;
+uniform vec3 sunDirection;
+uniform vec3 sunColor;
 uniform vec3 viewPos;
 uniform vec3 fogColor;
 uniform float fogNear;
 uniform float fogFar;
 uniform float worldDanger;
+uniform float sunIntensity;
+uniform float ambientStrength;
+uniform float shadowLightSize;
+uniform float shadowSoftnessScale;
+
+const vec2 kPoisson[16] = vec2[](
+    vec2(-0.94201624, -0.39906216), vec2( 0.94558609, -0.76890725),
+    vec2(-0.09418410, -0.92938870), vec2( 0.34495938,  0.29387760),
+    vec2(-0.91588581,  0.45771432), vec2(-0.81544232, -0.87912464),
+    vec2(-0.38277543,  0.27676845), vec2( 0.97484398,  0.75648379),
+    vec2( 0.44323325, -0.97511554), vec2( 0.53742981, -0.47373420),
+    vec2(-0.26496911, -0.41893023), vec2( 0.79197514,  0.19090188),
+    vec2(-0.24188840,  0.99706507), vec2(-0.81409955,  0.91437590),
+    vec2( 0.19984126,  0.78641367), vec2( 0.14383161, -0.14100790)
+);
 
 float hash12(vec2 p)
 {
@@ -24,6 +41,42 @@ float hash12(vec2 p)
 float saturate(float v)
 {
     return clamp(v, 0.0, 1.0);
+}
+
+float sampleShadowFiltered(vec2 uv, float compareDepth, float bias, vec2 texelSize, mat2 rotation, float radius)
+{
+    float shadow = 0.0;
+    float weightSum = 0.0;
+    for (int i = 0; i < 16; ++i)
+    {
+        vec2 sampleOffset = rotation * kPoisson[i] * radius;
+        float sampleDepth = texture(shadowMap, uv + sampleOffset).r;
+        float distWeight = 1.0 - saturate(length(kPoisson[i]) * 0.55);
+        shadow += ((compareDepth - bias) > sampleDepth ? 1.0 : 0.0) * distWeight;
+        weightSum += distWeight;
+    }
+    return shadow / max(weightSum, 0.0001);
+}
+
+float findAverageBlocker(vec2 uv, float compareDepth, float bias, vec2 texelSize, mat2 rotation, float searchRadius)
+{
+    float blockerDepth = 0.0;
+    float blockers = 0.0;
+    for (int i = 0; i < 16; ++i)
+    {
+        vec2 sampleOffset = rotation * kPoisson[i] * searchRadius;
+        float sampleDepth = texture(shadowMap, uv + sampleOffset).r;
+        if ((compareDepth - bias) > sampleDepth)
+        {
+            blockerDepth += sampleDepth;
+            blockers += 1.0;
+        }
+    }
+
+    if (blockers < 0.5)
+        return -1.0;
+
+    return blockerDepth / blockers;
 }
 
 float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
@@ -36,46 +89,38 @@ float calculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir)
 
     float ndotl = max(dot(normal, lightDir), 0.0);
     float bias = max(0.0035 * (1.0 - ndotl), 0.0010);
-
     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
-
-    const vec2 poisson[16] = vec2[](
-        vec2(-0.94201624, -0.39906216), vec2( 0.94558609, -0.76890725),
-        vec2(-0.09418410, -0.92938870), vec2( 0.34495938,  0.29387760),
-        vec2(-0.91588581,  0.45771432), vec2(-0.81544232, -0.87912464),
-        vec2(-0.38277543,  0.27676845), vec2( 0.97484398,  0.75648379),
-        vec2( 0.44323325, -0.97511554), vec2( 0.53742981, -0.47373420),
-        vec2(-0.26496911, -0.41893023), vec2( 0.79197514,  0.19090188),
-        vec2(-0.24188840,  0.99706507), vec2(-0.81409955,  0.91437590),
-        vec2( 0.19984126,  0.78641367), vec2( 0.14383161, -0.14100790)
-    );
 
     float randAngle = hash12(FragPos.xz * 1.91 + projCoords.xy * 23.7) * 6.2831853;
     mat2 rotation = mat2(cos(randAngle), -sin(randAngle), sin(randAngle), cos(randAngle));
 
     float receiverDepth = projCoords.z;
-    float softness = mix(0.9, 2.8, saturate(receiverDepth));
-    softness *= mix(0.85, 1.35, worldDanger);
+    float pcfRadius = texelSize.x * mix(1.2, 2.6, saturate(receiverDepth));
+    pcfRadius *= mix(0.95, 1.35, worldDanger);
 
-    float shadow = 0.0;
-    float weightSum = 0.0;
-    for (int i = 0; i < 16; ++i)
+    if (shadowFilterMode == 0)
     {
-        vec2 sampleOffset = rotation * poisson[i] * texelSize * softness;
-        float sampleDepth = texture(shadowMap, projCoords.xy + sampleOffset).r;
-        float distWeight = 1.0 - saturate(length(poisson[i]) * 0.65);
-        shadow += ((receiverDepth - bias) > sampleDepth ? 1.0 : 0.0) * distWeight;
-        weightSum += distWeight;
+        return sampleShadowFiltered(projCoords.xy, receiverDepth, bias, texelSize, rotation, pcfRadius);
     }
 
-    return shadow / max(weightSum, 0.0001);
+    float searchRadius = texelSize.x * mix(2.5, 5.5, saturate(receiverDepth));
+    searchRadius *= mix(0.95, 1.30, worldDanger);
+    float avgBlockerDepth = findAverageBlocker(projCoords.xy, receiverDepth, bias, texelSize, rotation, searchRadius);
+    if (avgBlockerDepth < 0.0)
+        return 0.0;
+
+    float penumbra = max(receiverDepth - avgBlockerDepth, 0.0) / max(avgBlockerDepth, 0.0001);
+    float filterRadius = shadowLightSize * penumbra * shadowSoftnessScale;
+    filterRadius = clamp(filterRadius, texelSize.x * 1.5, texelSize.x * shadowSoftnessScale);
+
+    return sampleShadowFiltered(projCoords.xy, receiverDepth, bias, texelSize, rotation, filterRadius);
 }
 
 void main()
 {
     vec3 texColor = texture(materialTex, TexCoord).rgb;
     vec3 norm = normalize(Normal);
-    vec3 lightDir = normalize(lightPos - FragPos);
+    vec3 lightDir = normalize(sunDirection);
     vec3 viewDir = normalize(viewPos - FragPos);
     vec3 halfDir = normalize(lightDir + viewDir);
 
@@ -136,16 +181,17 @@ void main()
     float rim = pow(1.0 - max(dot(viewDir, norm), 0.0), 2.25) * mix(0.05, 0.16, worldDanger);
 
     float upness = norm.y * 0.5 + 0.5;
-    vec3 hemiSky = fogColor * (0.42 + worldDanger * 0.12);
+    vec3 hemiSky = mix(fogColor, sunColor, 0.38) * ((ambientStrength + worldDanger * 0.08) * ambientBoost);
     vec3 hemiGround = vec3(0.10, 0.12, 0.14) * (1.0 - worldDanger * 0.15);
-    vec3 hemiAmbient = mix(hemiGround, hemiSky, upness) * (0.38 * ambientBoost);
+    vec3 hemiAmbient = mix(hemiGround, hemiSky, upness);
 
     float shadow = calculateShadow(FragPosLightSpace, norm, lightDir);
 
-    vec3 diffuseLight = texColor * diff;
-    vec3 specColor = mix(vec3(1.0), texColor, 0.12) * spec;
+    vec3 diffuseLight = texColor * diff * sunColor * sunIntensity;
+    vec3 specColor = mix(vec3(1.0), texColor, 0.12) * spec * sunColor * sunIntensity;
     vec3 lit = hemiAmbient * texColor + (1.0 - shadow) * (diffuseLight + specColor);
-    lit += texColor * rim + vec3(1.0) * fresnel * 0.03;
+    lit += texColor * rim;
+    lit += sunColor * fresnel * 0.03;
 
     if (materialType == 5)
     {

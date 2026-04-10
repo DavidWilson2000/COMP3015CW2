@@ -606,6 +606,7 @@ void RenderUIOverlay(const HUDState& state)
             {"FIND 3 KEYS AND REACH THE LOST ISLAND", text},
             {"WASD SAIL   E FISH   M TOGGLE MINIGAME", text},
             {"R SELL   1 2 3 UPGRADES   4 REPAIR   J JOURNAL", text},
+            {"F9 TOGGLE PCSS   F10 TOGGLE SUN CYCLE", text},
             {"PRESS ENTER TO START", good}
         };
         DrawOverlayLines(verts, sw, sh, title, lines, glm::vec4(0.02f, 0.05f, 0.09f, 0.92f), accent, 4.0f, 3.0f);
@@ -617,7 +618,8 @@ void RenderUIOverlay(const HUDState& state)
         std::vector<std::pair<std::string, glm::vec4>> lines = {
             {"WASD MOVE   E FISH   SPACE HOOK   M MINIGAME", text},
             {"R SELL   1 2 3 UPGRADES   4 REPAIR", text},
-            {"J JOURNAL   P CLOSE HELP   F5-F8 POST FX", text},
+            {"J JOURNAL   P CLOSE HELP   F5-F10 FX AND LIGHTING", text},
+            {"F9 TOGGLE PCSS   F10 TOGGLE SUN CYCLE", text},
             {"PRESS P TO RESUME", good}
         };
         DrawOverlayLines(verts, sw, sh, title, lines, glm::vec4(0.02f, 0.05f, 0.09f, 0.92f), outline, 4.0f, 3.0f);
