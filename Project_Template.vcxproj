@@ -215,10 +215,8 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
     <ClCompile Include="LostIslandSetpiece.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="PostProcess.cpp" />
-    <ClCompile Include="SkyboxCubemap.cpp" />
     <ClCompile Include="SoundManager.cpp" />
     <ClCompile Include="UIOverlay.cpp" />
-    <ClCompile Include="WorldGen.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="camera.h" />
@@ -233,10 +231,8 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
     <ClInclude Include="LostIslandSetpiece.h" />
     <ClInclude Include="PostProcess.h" />
     <ClInclude Include="SimpleOBJLoader.h" />
-    <ClInclude Include="SkyboxCubemap.h" />
     <ClInclude Include="SoundManager.h" />
     <ClInclude Include="UIOverlay.h" />
-    <ClInclude Include="WorldGen.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shader\basic.frag" />

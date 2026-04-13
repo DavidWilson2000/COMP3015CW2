@@ -21,8 +21,13 @@ public:
     void EnsureSize(int width, int height);
     void BeginScene(const glm::vec3& clearColor);
     void EndScene();
-    void Render(PostProcessMode mode, float time, const glm::vec2& sunScreenPos, const glm::vec3& sunColor, float sunVisibility, float dayFactor);
+
     void Render(PostProcessMode mode, float time);
+    void Render(PostProcessMode mode, float time,
+        const glm::vec2& sunScreenPos,
+        const glm::vec3& sunColor,
+        float sunVisibility,
+        float dayFactor);
 
 private:
     void CreateBuffers();

@@ -263,12 +263,6 @@ namespace
         glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(verts.size()));
     }
 
-    float MaxWidth(const std::vector<std::string>& lines, float scale)
-    {
-        float w = 0.0f;
-        for (const auto& line : lines) w = std::max(w, EstimateTextWidth(line, scale));
-        return w;
-    }
 
     void DrawOverlayLines(std::vector<UIVertex>& verts,
                           float sw,

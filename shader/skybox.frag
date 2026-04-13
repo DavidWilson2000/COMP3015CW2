@@ -5,9 +5,6 @@ out vec4 FragColor;
 uniform samplerCube skybox;
 uniform float time;
 uniform float worldDanger;
-uniform vec3 sunDirection;
-uniform vec3 sunColor;
-uniform float dayFactor;
 
 float hash21(vec2 p)
 {
@@ -47,23 +44,18 @@ void main()
     vec3 base = texture(skybox, dir).rgb;
 
     float horizon = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
-
-    vec3 zenithNight = vec3(0.03, 0.05, 0.10);
-    vec3 horizonNight = vec3(0.08, 0.10, 0.16);
-    vec3 zenithDay = mix(vec3(0.18, 0.24, 0.34), vec3(0.52, 0.70, 0.92), 1.0 - worldDanger * 0.75);
-    vec3 horizonDay = mix(vec3(0.72, 0.66, 0.58), vec3(0.84, 0.89, 0.96), 1.0 - worldDanger * 0.55);
-
-    vec3 zenithTint = mix(zenithNight, zenithDay, dayFactor);
-    vec3 horizonTint = mix(horizonNight, horizonDay, dayFactor);
+    vec3 zenithTint = mix(vec3(0.18, 0.24, 0.34), vec3(0.52, 0.70, 0.92), 1.0 - worldDanger * 0.75);
+    vec3 horizonTint = mix(vec3(0.72, 0.66, 0.58), vec3(0.84, 0.89, 0.96), 1.0 - worldDanger * 0.55);
     vec3 gradient = mix(horizonTint, zenithTint, smoothstep(0.0, 1.0, horizon));
 
-    vec3 color = mix(base * mix(0.25, 1.0, dayFactor), gradient, 0.60);
+    vec3 color = mix(base, gradient, 0.58);
 
-    float sunAmount = max(dot(dir, normalize(sunDirection)), 0.0);
-    float sunGlow = pow(sunAmount, 24.0) * mix(0.35, 1.0, dayFactor) * (1.0 - worldDanger * 0.55);
-    float sunCore = pow(sunAmount, 340.0) * mix(0.20, 1.0, dayFactor) * (1.0 - worldDanger * 0.85);
-    color += sunColor * sunGlow;
-    color += mix(vec3(1.0), sunColor, 0.35) * sunCore;
+    vec3 sunDir = normalize(vec3(0.35, 0.68, 0.20));
+    float sunAmount = max(dot(dir, sunDir), 0.0);
+    float sunGlow = pow(sunAmount, 24.0) * (1.0 - worldDanger * 0.55);
+    float sunCore = pow(sunAmount, 340.0) * (1.0 - worldDanger * 0.85);
+    color += vec3(1.00, 0.85, 0.62) * sunGlow;
+    color += vec3(1.00, 0.94, 0.82) * sunCore;
 
     if (dir.y > -0.12)
     {
@@ -80,21 +72,10 @@ void main()
         cloud = smoothstep(thresholdLo, thresholdHi, cloud);
         float cloudMask = cloud * smoothstep(-0.04, 0.58, dir.y);
 
-        vec3 cloudBright = mix(vec3(0.20, 0.24, 0.30), vec3(0.90, 0.91, 0.94), dayFactor);
-        vec3 cloudDark = mix(vec3(0.06, 0.08, 0.12), vec3(0.48, 0.54, 0.62), dayFactor);
-        cloudBright = mix(cloudBright, vec3(0.80, 0.82, 0.87), worldDanger * 0.45);
-        cloudDark = mix(cloudDark, vec3(0.24, 0.28, 0.34), worldDanger * 0.55);
+        vec3 cloudBright = mix(vec3(0.90, 0.91, 0.94), vec3(0.80, 0.82, 0.87), worldDanger);
+        vec3 cloudDark = mix(vec3(0.48, 0.54, 0.62), vec3(0.24, 0.28, 0.34), worldDanger);
         vec3 cloudColor = mix(cloudDark, cloudBright, horizon);
-        color = mix(color, cloudColor, cloudMask * mix(0.28, 0.52, dayFactor));
-    }
-
-    float nightMask = 1.0 - dayFactor;
-    if (nightMask > 0.01 && dir.y > 0.0)
-    {
-        vec2 starUV = normalize(dir).xz * 220.0 + vec2(0.0, time * 0.002);
-        float starField = hash21(floor(starUV));
-        float star = step(0.9925, starField) * smoothstep(0.05, 0.45, dir.y);
-        color += vec3(0.72, 0.80, 0.95) * star * nightMask * 0.9;
+        color = mix(color, cloudColor, cloudMask * (0.45 + worldDanger * 0.18));
     }
 
     float stormBand = smoothstep(0.15, -0.25, dir.y) * worldDanger;

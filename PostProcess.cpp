@@ -209,7 +209,11 @@ void PostProcessor::Render(PostProcessMode mode, float time)
     );
 }
 
-void PostProcessor::Render(PostProcessMode mode, float time, const glm::vec2& sunScreenPos, const glm::vec3& sunColor, float sunVisibility, float dayFactor)
+void PostProcessor::Render(PostProcessMode mode, float time,
+    const glm::vec2& sunScreenPos,
+    const glm::vec3& sunColor,
+    float sunVisibility,
+    float dayFactor)
 {
     glDisable(GL_DEPTH_TEST);
     glUseProgram(shader_);
@@ -217,7 +221,9 @@ void PostProcessor::Render(PostProcessMode mode, float time, const glm::vec2& su
     glBindTexture(GL_TEXTURE_2D, colorTex_);
     glUniform1i(glGetUniformLocation(shader_, "sceneTex"), 0);
     glUniform1i(glGetUniformLocation(shader_, "mode"), static_cast<int>(mode));
-    glUniform2f(glGetUniformLocation(shader_, "texelSize"), 1.0f / static_cast<float>(width_), 1.0f / static_cast<float>(height_));
+    glUniform2f(glGetUniformLocation(shader_, "texelSize"),
+        1.0f / static_cast<float>(width_),
+        1.0f / static_cast<float>(height_));
     glUniform1f(glGetUniformLocation(shader_, "time"), time);
     glUniform2f(glGetUniformLocation(shader_, "sunScreenPos"), sunScreenPos.x, sunScreenPos.y);
     glUniform3f(glGetUniformLocation(shader_, "sunColor"), sunColor.r, sunColor.g, sunColor.b);
@@ -228,4 +234,4 @@ void PostProcessor::Render(PostProcessMode mode, float time, const glm::vec2& su
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
     glEnable(GL_DEPTH_TEST);
-}
+} 

@@ -1,6 +1,7 @@
-#version 460 core
-in vec2 TexCoord;
+#version 330 core
 out vec4 FragColor;
+
+in vec2 TexCoords;
 
 uniform sampler2D sceneTex;
 uniform int mode;
@@ -13,133 +14,117 @@ uniform float dayFactor;
 
 float luminance(vec3 c)
 {
-    return dot(c, vec3(0.299, 0.587, 0.114));
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
 }
 
-float hash(vec2 p)
+vec3 applyEdge(vec2 uv)
 {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-}
+    float kernelX[9] = float[](
+        -1, 0, 1,
+        -2, 0, 2,
+        -1, 0, 1
+    );
+    float kernelY[9] = float[](
+        -1, -2, -1,
+         0,  0,  0,
+         1,  2,  1
+    );
 
-vec3 sampleScene(vec2 uv)
-{
-    return texture(sceneTex, uv).rgb;
-}
+    vec2 offsets[9] = vec2[](
+        vec2(-texelSize.x,  texelSize.y), vec2(0.0,  texelSize.y), vec2(texelSize.x,  texelSize.y),
+        vec2(-texelSize.x,  0.0),         vec2(0.0,  0.0),         vec2(texelSize.x,  0.0),
+        vec2(-texelSize.x, -texelSize.y), vec2(0.0, -texelSize.y), vec2(texelSize.x, -texelSize.y)
+    );
 
-vec3 gaussianBlur(vec2 uv)
-{
-    vec2 t = texelSize;
-    vec3 sum = vec3(0.0);
-    sum += sampleScene(uv + t * vec2(-2.0,  0.0)) * 0.06136;
-    sum += sampleScene(uv + t * vec2(-1.0, -1.0)) * 0.07650;
-    sum += sampleScene(uv + t * vec2(-1.0,  0.0)) * 0.12245;
-    sum += sampleScene(uv + t * vec2(-1.0,  1.0)) * 0.07650;
-    sum += sampleScene(uv + t * vec2( 0.0, -1.0)) * 0.12245;
-    sum += sampleScene(uv)                         * 0.16330;
-    sum += sampleScene(uv + t * vec2( 0.0,  1.0)) * 0.12245;
-    sum += sampleScene(uv + t * vec2( 1.0, -1.0)) * 0.07650;
-    sum += sampleScene(uv + t * vec2( 1.0,  0.0)) * 0.12245;
-    sum += sampleScene(uv + t * vec2( 1.0,  1.0)) * 0.07650;
-    return sum;
-}
-
-vec3 edgeDetect(vec2 uv)
-{
-    float tl = luminance(sampleScene(uv + texelSize * vec2(-1.0,  1.0)));
-    float tc = luminance(sampleScene(uv + texelSize * vec2( 0.0,  1.0)));
-    float tr = luminance(sampleScene(uv + texelSize * vec2( 1.0,  1.0)));
-    float ml = luminance(sampleScene(uv + texelSize * vec2(-1.0,  0.0)));
-    float mc = luminance(sampleScene(uv));
-    float mr = luminance(sampleScene(uv + texelSize * vec2( 1.0,  0.0)));
-    float bl = luminance(sampleScene(uv + texelSize * vec2(-1.0, -1.0)));
-    float bc = luminance(sampleScene(uv + texelSize * vec2( 0.0, -1.0)));
-    float br = luminance(sampleScene(uv + texelSize * vec2( 1.0, -1.0)));
-
-    float gx = -tl - 2.0 * ml - bl + tr + 2.0 * mr + br;
-    float gy = -bl - 2.0 * bc - br + tl + 2.0 * tc + tr;
-    float edge = clamp(length(vec2(gx, gy)) * 1.25, 0.0, 1.0);
-
-    vec3 base = sampleScene(uv);
-    vec3 ink = mix(vec3(0.08, 0.12, 0.18), vec3(0.95), edge);
-    return mix(base * 0.50 + mc * 0.10, ink, edge * 0.88);
-}
-
-vec3 nightVision(vec2 uv)
-{
-    vec3 base = sampleScene(uv);
-    float lum = luminance(base);
-    float noise = hash(uv * vec2(1280.0, 720.0) + time * 0.5) - 0.5;
-    float scan = 0.90 + 0.10 * sin(uv.y * 920.0 + time * 13.0);
-    float vignette = smoothstep(0.86, 0.22, length(uv - 0.5));
-
-    float r = texture(sceneTex, uv + vec2(texelSize.x * 0.7, 0.0)).r;
-    float g = texture(sceneTex, uv).g;
-    float b = texture(sceneTex, uv - vec2(texelSize.x * 0.7, 0.0)).b;
-    vec3 shifted = vec3(r, g, b);
-
-    float phosphor = smoothstep(0.10, 0.95, lum + 0.18);
-    vec3 green = vec3(0.08, 1.0, 0.24) * (luminance(shifted) * 1.40 + noise * 0.10 + phosphor * 0.08);
-    green *= scan * vignette;
-    green += vec3(0.01, 0.08, 0.02) * pow(phosphor, 3.0);
-    return green;
-}
-
-vec3 godRays(vec2 uv)
-{
-    vec3 base = sampleScene(uv);
-    if (sunVisibility <= 0.001 || dayFactor <= 0.001)
-        return base;
-
-    vec2 toSun = sunScreenPos - uv;
-    float sunDist = length(toSun);
-    vec2 dir = toSun / max(sunDist, 0.0001);
-
-    const int NUM_SAMPLES = 36;
-    float density = mix(0.72, 0.94, dayFactor);
-    float decay = 0.955;
-    float weight = 0.23;
-    float exposure = mix(0.11, 0.18, dayFactor) * sunVisibility;
-
-    vec2 stepUV = dir * sunDist * density / float(NUM_SAMPLES);
-    vec2 sampleUV = uv;
-    float illuminationDecay = 1.0;
-    vec3 accum = vec3(0.0);
-
-    for (int i = 0; i < NUM_SAMPLES; ++i)
+    float gx = 0.0;
+    float gy = 0.0;
+    for (int i = 0; i < 9; ++i)
     {
-        sampleUV += stepUV;
-        vec3 sampleColor = sampleScene(clamp(sampleUV, vec2(0.001), vec2(0.999)));
-        float lum = luminance(sampleColor);
-        float brightMask = smoothstep(0.62, 1.05, lum);
-        float warmMask = smoothstep(0.55, 0.95, dot(normalize(sampleColor + vec3(0.0001)), normalize(sunColor + vec3(0.0001))));
-        float source = mix(brightMask, brightMask * warmMask, 0.45);
-        accum += sampleColor * source * illuminationDecay * weight;
+        float l = luminance(texture(sceneTex, uv + offsets[i]).rgb);
+        gx += l * kernelX[i];
+        gy += l * kernelY[i];
+    }
+    float edge = clamp(length(vec2(gx, gy)), 0.0, 1.0);
+    return vec3(edge);
+}
+
+vec3 applyBlur(vec2 uv)
+{
+    vec3 col = vec3(0.0);
+    float weightSum = 0.0;
+    for (int x = -2; x <= 2; ++x)
+    {
+        for (int y = -2; y <= 2; ++y)
+        {
+            float w = 1.0 / (1.0 + float(x * x + y * y));
+            col += texture(sceneTex, uv + vec2(x, y) * texelSize).rgb * w;
+            weightSum += w;
+        }
+    }
+    return col / max(weightSum, 0.0001);
+}
+
+vec3 applyNightVision(vec2 uv)
+{
+    vec3 color = texture(sceneTex, uv).rgb;
+    float gray = luminance(color);
+    float scan = 0.92 + 0.08 * sin(uv.y * 900.0 + time * 8.0);
+    float noise = fract(sin(dot(uv + time, vec2(12.9898, 78.233))) * 43758.5453);
+    vec3 nv = vec3(0.08, 0.95, 0.18) * gray * scan;
+    nv += vec3(noise * 0.05);
+    return nv;
+}
+
+vec3 applyGodRays(vec2 uv)
+{
+    vec3 scene = texture(sceneTex, uv).rgb;
+
+    vec2 sunUV = sunScreenPos;
+    vec2 delta = sunUV - uv;
+    float dist = length(delta);
+
+    if (dayFactor <= 0.001 || dist > 1.8)
+        return scene;
+
+    vec2 stepUV = delta / 64.0;
+    vec2 sampleUV = uv;
+
+    float illuminationDecay = 1.0;
+    float shafts = 0.0;
+    const float exposure = 0.65;
+    const float decay = 0.965;
+    const float density = 0.90;
+    const float weight = 0.070;
+
+    for (int i = 0; i < 64; ++i)
+    {
+        sampleUV += stepUV * density;
+        vec3 sampleCol = texture(sceneTex, clamp(sampleUV, vec2(0.0), vec2(1.0))).rgb;
+        float sampleLum = luminance(sampleCol);
+        float bright = smoothstep(0.35, 1.0, sampleLum);
+        shafts += bright * illuminationDecay * weight;
         illuminationDecay *= decay;
     }
 
-    float radialCenter = smoothstep(1.15, 0.08, sunDist);
-    float radialWide = smoothstep(1.45, 0.18, sunDist);
-    vec3 shaftTint = mix(vec3(1.0), sunColor, 0.72);
-    vec3 shafts = accum * shaftTint;
-    shafts += shaftTint * radialCenter * 0.18 * sunVisibility;
-
-    vec3 color = base + shafts * exposure * radialWide;
-    color += shaftTint * pow(max(1.0 - sunDist * 1.35, 0.0), 8.0) * 0.12 * sunVisibility;
-    return color;
+    float disk = smoothstep(0.20, 0.0, dist) * 0.9;
+    float mask = smoothstep(1.3, 0.0, dist);
+    float visibility = max(sunVisibility, 0.35 * dayFactor);
+    vec3 rays = sunColor * (shafts * exposure + disk) * visibility * mask;
+    return scene + rays;
 }
 
 void main()
 {
-    vec3 color = sampleScene(TexCoord);
+    vec3 color = texture(sceneTex, TexCoords).rgb;
 
     if (mode == 1)
-        color = edgeDetect(TexCoord);
+        color = applyEdge(TexCoords);
     else if (mode == 2)
-        color = gaussianBlur(TexCoord);
+        color = applyBlur(TexCoords);
     else if (mode == 3)
-        color = nightVision(TexCoord);
+        color = applyNightVision(TexCoords);
     else if (mode == 4)
-        color = godRays(TexCoord);
+        color = applyGodRays(TexCoords);
 
     FragColor = vec4(color, 1.0);
 }
