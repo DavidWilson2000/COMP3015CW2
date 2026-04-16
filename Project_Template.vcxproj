@@ -208,6 +208,7 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="FishingMinigame.cpp" />
+    <ClCompile Include="GameSettingsMenu.cpp" />
     <ClCompile Include="glad.c" />
     <ClCompile Include="helper\glslprogram.cpp" />
     <ClCompile Include="helper\glutils.cpp" />
@@ -221,6 +222,7 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
   <ItemGroup>
     <ClInclude Include="camera.h" />
     <ClInclude Include="FishingMinigame.h" />
+    <ClInclude Include="GameSettingsMenu.h" />
     <ClInclude Include="helper\glslprogram.h" />
     <ClInclude Include="helper\glutils.h" />
     <ClInclude Include="helper\scene.h" />

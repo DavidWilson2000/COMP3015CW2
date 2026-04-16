@@ -28,6 +28,7 @@
 #include "SoundManager.h"
 #include "IslandQuest.h"
 #include "LostIslandSetpiece.h"
+#include "GameSettingsMenu.h"
 
 
 const unsigned int SCR_WIDTH = 1280;
@@ -69,6 +70,12 @@ bool minigameHookPressed = false;
 bool cameraModeTogglePressed = false;
 bool shadowModeTogglePressed = false;
 bool gAnimateSunCycle = true;
+bool settingsTogglePressed = false;
+bool settingsUpPressed = false;
+bool settingsDownPressed = false;
+bool settingsLeftPressed = false;
+bool settingsRightPressed = false;
+bool settingsResetPressed = false;
 
 struct ModelMesh
 {
@@ -307,6 +314,7 @@ FishData gPendingMinigameFish;
 bool gHasPendingMinigameFish = false;
 SoundManager gSound;
 IslandQuest gIslandQuest;
+GameSettingsMenu gSettingsMenu;
 
 
 GLuint cubeVAO = 0, cubeVBO = 0;
@@ -2273,18 +2281,35 @@ void renderParticles(const glm::mat4& view, const glm::mat4& projection)
 int main()
 {
     srand(static_cast<unsigned int>(time(nullptr)));
-
     if (!glfwInit()) return -1;
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
 
-    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Dredge-style Fishing Prototype", nullptr, nullptr);
+    GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
+    const GLFWvidmode* mode = glfwGetVideoMode(primaryMonitor);
+
+    int windowWidth = static_cast<int>(mode->width * 0.94f);
+    int windowHeight = static_cast<int>(mode->height * 0.90f);
+
+    GLFWwindow* window = glfwCreateWindow(
+        windowWidth,
+        windowHeight,
+        "Dredge-style Fishing Prototype",
+        nullptr,
+        nullptr
+    );
+
     if (!window)
     {
         glfwTerminate();
         return -1;
     }
+
+    int windowPosX = (mode->width - windowWidth) / 2;
+    int windowPosY = (mode->height - windowHeight) / 2;
+    glfwSetWindowPos(window, windowPosX, windowPosY);
 
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
@@ -2296,7 +2321,10 @@ int main()
         return -1;
     }
 
-    glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+    glViewport(0, 0, windowWidth, windowHeight);
+    gWindowWidth = windowWidth;
+    gWindowHeight = windowHeight;
+
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_PROGRAM_POINT_SIZE);
 
@@ -2307,6 +2335,7 @@ int main()
     skyboxShader = createShaderProgramFromFiles(SKYBOX_VERT_PATH, SKYBOX_FRAG_PATH);
 
     InitUIOverlay();
+    InitGameSettingsMenuRenderer();
     if (!gPostProcessor.Init(gWindowWidth, gWindowHeight, POSTPROCESS_VERT_PATH, POSTPROCESS_FRAG_PATH))
     {
         std::cerr << "Failed to initialize post-processing pipeline." << std::endl;
@@ -2406,6 +2435,69 @@ int main()
         }
         if (!keys[GLFW_KEY_J]) journalPressed = false;
 
+        if (gGameStarted && keys[GLFW_KEY_O] && !settingsTogglePressed)
+        {
+            gSettingsMenu.ToggleOpen();
+            if (gSettingsMenu.IsOpen())
+            {
+                gPaused = false;
+                gJournalOpen = false;
+            }
+            settingsTogglePressed = true;
+            gSettingsMenu.ApplyAudio(gSound);
+            setCatchMessage(window, gSettingsMenu.IsOpen() ? "Settings opened" : "Settings closed", 1.2f);
+        }
+        if (!keys[GLFW_KEY_O]) settingsTogglePressed = false;
+
+        if (gSettingsMenu.IsOpen())
+        {
+            if (keys[GLFW_KEY_UP] && !settingsUpPressed)
+            {
+                gSettingsMenu.MoveSelection(-1);
+                settingsUpPressed = true;
+            }
+            if (!keys[GLFW_KEY_UP]) settingsUpPressed = false;
+
+            if (keys[GLFW_KEY_DOWN] && !settingsDownPressed)
+            {
+                gSettingsMenu.MoveSelection(1);
+                settingsDownPressed = true;
+            }
+            if (!keys[GLFW_KEY_DOWN]) settingsDownPressed = false;
+
+            if (keys[GLFW_KEY_LEFT] && !settingsLeftPressed)
+            {
+                gSettingsMenu.AdjustSelected(-0.05f);
+                gSettingsMenu.ApplyAudio(gSound);
+                settingsLeftPressed = true;
+            }
+            if (!keys[GLFW_KEY_LEFT]) settingsLeftPressed = false;
+
+            if (keys[GLFW_KEY_RIGHT] && !settingsRightPressed)
+            {
+                gSettingsMenu.AdjustSelected(0.05f);
+                gSettingsMenu.ApplyAudio(gSound);
+                settingsRightPressed = true;
+            }
+            if (!keys[GLFW_KEY_RIGHT]) settingsRightPressed = false;
+
+            if (keys[GLFW_KEY_R] && !settingsResetPressed)
+            {
+                gSettingsMenu.ResetDefaults();
+                gSettingsMenu.ApplyAudio(gSound);
+                settingsResetPressed = true;
+            }
+            if (!keys[GLFW_KEY_R]) settingsResetPressed = false;
+        }
+        else
+        {
+            settingsUpPressed = false;
+            settingsDownPressed = false;
+            settingsLeftPressed = false;
+            settingsRightPressed = false;
+            settingsResetPressed = false;
+        }
+
         if (gJournalOpen && keys[GLFW_KEY_LEFT] && !journalLeftPressed)
         {
             gJournalPage = std::max(0, gJournalPage - 1);
@@ -2420,7 +2512,7 @@ int main()
         }
         if (!keys[GLFW_KEY_RIGHT]) journalRightPressed = false;
 
-        const bool gameplayBlocked = !gGameStarted || gPaused || gJournalOpen;
+        const bool gameplayBlocked = !gGameStarted || gPaused || gJournalOpen || gSettingsMenu.IsOpen();
 
         if (!gameplayBlocked)
         {
@@ -2453,6 +2545,12 @@ int main()
 
             updateDangerGameplay(window, deltaTime);
             gSound.UpdateBoatMotor(std::abs(boat.velocity), boat.maxForwardSpeed);
+            std::string currentAudioZone = getCurrentZoneName();
+            if (gIslandQuest.HasWon())
+            {
+                currentAudioZone = "Lost Island";
+            }
+            gSound.UpdateZoneLayer(currentAudioZone, deltaTime, getWorldDanger());
             triggerWinCelebration();
 
             if (fishCooldown > 0.0f) fishCooldown -= deltaTime;
@@ -2527,6 +2625,12 @@ int main()
             minigameTogglePressed = false;
             minigameHookPressed = false;
             gSound.UpdateBoatMotor(0.0f, boat.maxForwardSpeed);
+            std::string currentAudioZone = getCurrentZoneName();
+            if (gIslandQuest.HasWon())
+            {
+                currentAudioZone = "Lost Island";
+            }
+            gSound.UpdateZoneLayer(currentAudioZone, deltaTime, getWorldDanger());
         }
 
         updateParticles(deltaTime);
@@ -2547,13 +2651,15 @@ int main()
         else if (gPostMode == PostProcessMode::NightVision) postLabel = "NightVision";
         else if (gPostMode == PostProcessMode::GodRays) postLabel = "GodRays";
         title << " | PP: " << postLabel
-              << " | Shadow: " << getShadowFilterLabel()
+              << " | Shadows: " << getShadowFilterLabel()
               << " | Camera: " << GetCameraModeLabel()
+              << " | Shadow: " << getShadowFilterLabel()
               << " | MiniGame: " << (gFishingMinigame.IsEnabled() ? (gFishingMinigame.IsActive() ? "Active" : "On") : "Off")
               << " | Quest: " << gIslandQuest.GetQuestSummary();
         if (!gGameStarted) title << " | PRESS ENTER TO START";
         if (gPaused) title << " | PAUSED";
         if (gJournalOpen) title << " | JOURNAL";
+        if (gSettingsMenu.IsOpen()) title << " | SETTINGS";
         if (isAtDock())
         {
             title << " | Sell[R] | Rod[1:" << rodUpgradeCost() << "g]"
@@ -2574,8 +2680,11 @@ int main()
         glfwSetWindowTitle(window, title.str().c_str());
 
         SunState sun = EvaluateSunState(currentFrame);
+        const float settingsBrightness = gSettingsMenu.GetBrightness();
+        sun.intensity *= settingsBrightness;
+        sun.ambient *= (0.70f + settingsBrightness * 0.30f);
 
-        glm::vec3 fogColor = getEffectiveFogColor();
+        glm::vec3 fogColor = getEffectiveFogColor() * (0.78f + settingsBrightness * 0.22f);
         glm::vec3 clearColor = glm::mix(fogColor, glm::vec3(0.95f, 0.90f, 0.78f), catchFlashTimer * 0.4f);
         clearColor = glm::mix(clearColor, glm::vec3(0.08f, 0.10f, 0.16f), 0.22f * (1.0f - sun.dayFactor));
         if (hullWarningTimer > 0.0f)
@@ -2588,6 +2697,7 @@ int main()
             const float winGlow = 0.14f + 0.06f * std::sin(currentFrame * 3.5f);
             clearColor = glm::mix(clearColor, glm::vec3(0.96f, 0.86f, 0.46f), winGlow);
         }
+        clearColor *= (0.72f + settingsBrightness * 0.28f);
         glClearColor(clearColor.r, clearColor.g, clearColor.b, 1.0f);
 
         glm::vec3 cameraTarget = getCameraTarget();
@@ -2702,15 +2812,15 @@ int main()
         }
         else if (hud.hasWon)
         {
-            hud.hintText = "THE LOST ISLAND HAS BEEN REACHED  C:" + std::string(GetCameraModeLabel()) + (gCameraMode == CameraMode::FreeLook ? std::string(" ARROWS LOOK") : std::string("")); 
+            hud.hintText = "THE LOST ISLAND HAS BEEN REACHED  C:" + std::string(GetCameraModeLabel()) + (gCameraMode == CameraMode::FreeLook ? std::string(" ARROWS LOOK") : std::string(""));
         }
         else if (hud.goalIslandUnlocked)
         {
-            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  J JOURNAL  P HELP  SAIL TO THE LOST ISLAND" + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
+            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  C:" + std::string(GetCameraModeLabel()) + (gCameraMode == CameraMode::FreeLook ? std::string(" ARROWS LOOK") : std::string("")) + "  SAIL TO THE LOST ISLAND" + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
         }
         else
         {
-            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  J JOURNAL  P HELP  KEYS " + std::to_string(hud.keysCollected) + "/" + std::to_string(hud.keysTotal) + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
+            hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  C:" + std::string(GetCameraModeLabel()) + (gCameraMode == CameraMode::FreeLook ? std::string(" ARROWS LOOK") : std::string("")) + "  KEYS " + std::to_string(hud.keysCollected) + "/" + std::to_string(hud.keysTotal) + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
         }
         if (!gGameStarted)
         {
@@ -2719,6 +2829,7 @@ int main()
             hud.messageTimer = 999.0f;
         }
         RenderUIOverlay(hud);
+        RenderGameSettingsMenu(gWindowWidth, gWindowHeight, gSettingsMenu.GetState());
 
         glfwSwapBuffers(window);
     }
@@ -2738,6 +2849,7 @@ int main()
     }
 
     gPostProcessor.Shutdown();
+    ShutdownGameSettingsMenuRenderer();
     ShutdownUIOverlay();
     gSound.Shutdown();
 

@@ -49,6 +49,14 @@ The project relies on relative asset paths, so shaders, textures, sounds, models
 - **P** = pause / help screen
 - **J** = open fish journal
 - **Left / Right Arrow** = change fish journal page
+- **O** = open / close settings menu
+- **Up / Down** = move through settings menu
+- **Left / Right** = adjust selected setting
+- **R** (inside settings menu) = reset settings to defaults
+
+### Camera
+- **C** = toggle camera mode
+- **Arrow Keys** = look around in free-look camera mode
 
 ### Shader / rendering controls
 - **F5** = edge detection
@@ -78,9 +86,9 @@ The project has three main layers:
    Handles fishing, upgrades, cargo, hull damage, danger, key collection, Lost Island unlock, and victory conditions.
 
 3. **Feedback / interface layer**  
-   Handles the HUD, fish journal, pause/help screens, catch cards, banners, quest display, and victory presentation.
+   Handles the HUD, fish journal, pause/help screens, catch cards, banners, quest display, victory presentation, and settings menu.
 
-The main design goal was to make the rendering work support the gameplay loop. Zone fog, water tint, danger, shadow presentation, and post-processing are all tied to player experience rather than being disconnected technical demos.
+The main design goal was to make the rendering work support the gameplay loop. Zone fog, water tint, danger, audio layering, shadow presentation, and post-processing are all tied to player experience rather than being disconnected technical demos.
 
 ---
 
@@ -107,8 +115,9 @@ Inside the loop, the game:
 - renders the world scene
 - applies post-processing
 - builds and renders the UI
+- renders the settings menu when opened
 
-This makes `main.cpp` the central coordinator for the project.
+This makes `main.cpp` the central coordinator for the project, while individual systems remain separated into their own files to keep responsibilities clearer.
 
 ---
 
@@ -135,8 +144,15 @@ This class manages progression through the three key objectives and the final Lo
 This wraps irrKlang and handles:
 - sound system setup
 - background loop
-- motor audio
+- boat motor audio
 - splash and reel effects
+- zone-layer ambience
+- audio category controls for:
+  - master volume
+  - music volume
+  - SFX volume
+
+The background ambience remains active, while biome-specific loops fade in and out as the player approaches or leaves different island regions.
 
 ### `UIOverlay`
 This system renders the custom HUD and menu screens. It uses a `HUDState` structure to receive all data needed for:
@@ -149,6 +165,15 @@ This system renders the custom HUD and menu screens. It uses a `HUDState` struct
 - caught fish card
 - journal pages
 - start, pause, and victory overlays
+
+### `GameSettingsMenu`
+This is a separate settings system used to keep the main file cleaner. It stores and renders:
+- brightness
+- master volume
+- music volume
+- SFX volume
+
+This improves usability and presentation while also making the project feel more like a complete game rather than only a prototype scene.
 
 ### `PostProcessor`
 This handles the fullscreen post-process pass and applies:
@@ -168,7 +193,7 @@ The gameplay loop works as follows:
 
 1. The player starts at the dock.
 2. They sail into fishing zones.
-3. Each zone has a different fish pool, water tint, fog values, and danger level.
+3. Each zone has a different fish pool, water tint, fog values, danger level, and audio mood.
 4. The player catches fish either instantly or through the optional fishing minigame.
 5. Fish are stored as cargo.
 6. The player returns to the dock to sell cargo for gold.
@@ -221,17 +246,17 @@ The rendered scene is passed through a fullscreen post-process stage which can a
 
 ## Advanced graphics features demonstrated
 
-This project combines multiple techniques from the shader rubric into one pipeline.
+This project combines multiple techniques from the shader rubric into one pipeline rather than implementing only one isolated effect.
 
 ### Shadow mapping
 The scene uses a dedicated depth pass and shadow map texture so shadows can be sampled in the main lit pass.
 
 ### PCF / PCSS shadow filtering
-The shadow system supports a toggle between:
+The shadow system supports a live toggle between:
 - **PCF** for a simpler filtered shadow result
 - **PCSS** for softer penumbra-style shadows
 
-This makes the shadows more visually convincing than a single hard shadow compare.
+This makes the shadows more visually convincing than a single hard shadow compare and gives a clear demonstration feature for the video.
 
 ### Dynamic sun cycle
 The lighting system includes a time-driven sun cycle that changes:
@@ -266,6 +291,28 @@ Particles are used both as atmosphere and gameplay feedback:
 ### Skybox and atmosphere
 The project includes a skybox and dynamic fog/water colour blending to make each zone feel visually distinct.
 
+### Adjustable brightness
+A settings menu allows the player to adjust overall scene brightness without changing the underlying shader modes. This improves usability and also shows consideration for presentation and accessibility.
+
+---
+
+## Audio design
+
+Audio is no longer only a single background loop.
+
+The project now layers audio in the following way:
+- a main background ambience remains active
+- the boat motor fades based on speed
+- splash and reel SFX play during interaction
+- biome-specific ambient layers fade in and out as the player approaches or leaves island zones
+- Lost Island uses its own audio mood
+- the settings menu allows:
+  - master volume control
+  - music volume control
+  - SFX volume control
+
+This improves atmosphere and helps address one of the weaknesses from the earlier coursework feedback, where more background music/audio would have helped.
+
 ---
 
 ## What makes this project special
@@ -273,12 +320,13 @@ The project includes a skybox and dynamic fog/water colour blending to make each
 The strongest part of the project is that the shader work is not isolated from the gameplay.
 
 Examples:
-- different fishing zones also change fog, tint, and danger
+- different fishing zones also change fog, tint, danger, and ambience
 - the Lost Island is hidden by progression-based fog until unlocked
 - shadows affect both the world and the water presentation
 - post-processing can be toggled during live play for direct inspection
+- settings menu controls brightness and audio
 - UI feedback makes the gameplay systems readable instead of hidden
-- atmosphere, progression, and rendering are all tied together
+- atmosphere, progression, rendering, and sound are all tied together
 
 A simpler coursework solution could have shown one object with one shader.  
 This project instead behaves like a coordinated game scene with progression, feedback, atmosphere, and multiple interacting systems.
@@ -303,9 +351,14 @@ What makes the project original is not just the isolated shader ideas, but the f
 - a fishing game loop
 - a quest system
 - a full UI
+- a settings menu
+- audio layering
 - danger and damage systems
 - zone-based atmosphere
 - a final unlockable objective
+
+### Starting point and adaptation
+The project began as a continuation of my CW1 work, but it was expanded well beyond the earlier shrine scene. My CW1 feedback noted that the earlier project had basic gameplay, limited UI, and a report that did not explain the implementation deeply enough. In this version I intentionally addressed those points by building a much fuller gameplay loop, stronger HUD/menu systems, better atmosphere/audio, and more advanced rendering features. :contentReference[oaicite:2]{index=2}
 
 ---
 
@@ -316,6 +369,7 @@ The project is split into systems for:
 - fishing minigame logic
 - quest logic
 - audio
+- settings menu
 - UI/HUD rendering
 - post-processing
 - Lost Island setpiece transforms
@@ -326,6 +380,9 @@ This made the project easier to maintain and debug.
 The UI does not directly query all game systems itself.  
 Instead, the game builds a `HUDState` object and passes it into the UI renderer.  
 This keeps the rendering layer cleaner and reduces tight coupling.
+
+### Separate settings menu file
+The settings menu was deliberately built in its own file to avoid overloading `main.cpp` even further. That kept input handling and rendering integration cleaner than mixing all menu code into the main loop.
 
 ### Fallback resources
 Some textures use procedural fallback generation when file loading fails.  
@@ -345,7 +402,8 @@ Examples:
 - PCSS produces better-looking shadows but costs more than simpler PCF
 - post-processing improves scene style but adds a fullscreen pass
 - particles improve feedback and atmosphere but add update/render overhead
-- custom UI gives full control but takes more development effort than using a library
+- layered biome audio improves atmosphere but adds extra looping sounds to manage
+- custom UI and settings menus give full control but take more development effort than using a library
 
 For this coursework, these trade-offs were worthwhile because they made the final result more convincing and game-like.
 
@@ -367,6 +425,8 @@ The final version includes:
 - dynamic lighting and shadows
 - post-processing
 - particle feedback
+- layered biome audio
+- settings for brightness and volume
 - a final Lost Island objective
 - a victory state
 
@@ -374,10 +434,10 @@ I am especially happy with how the UI and feedback systems developed, because th
 
 If I had more time, I would improve:
 1. packaging and asset handling
-2. per-zone audio variety
-3. persistence / save systems
-4. deeper fish behaviour differences
-5. even stronger inline shader documentation
+2. persistence / save systems
+3. deeper fish behaviour differences by biome
+4. more bespoke audio events within each zone
+5. even stronger inline shader documentation with direct source references
 
 ---
 
@@ -388,6 +448,7 @@ Knowing what I know now, I would:
 - document each render pass as it was added
 - keep a stricter asset naming convention
 - keep a more formal record of which research techniques were adapted and how
+- define the final settings/menu scope earlier in development
 
 One of the biggest challenges of this coursework was not writing one shader, but integrating many systems without breaking the earlier working build.
 
@@ -406,19 +467,23 @@ The video should show:
 - cargo selling and upgrades
 - hull danger and repair
 - fish journal pages
+- settings menu use
+- brightness adjustment
+- volume controls
 - key collection and Lost Island unlock
 - reaching the Lost Island
 - **F9** PCF vs PCSS
 - **F10** sun cycle
 - **F11** god rays
 - **F5–F8** post-process modes
+- **C** camera toggle and free-look
 
 ---
 
 ## Public GitHub repository
 
 Public GitHub repository:  
-**[PASTE YOUR PUBLIC GITHUB LINK HERE]**
+**https://github.com/DavidWilson2000/COMP3015CW2**
 
 ---
 
@@ -442,6 +507,7 @@ Important files and folders include:
 - `FishingMinigame.h / .cpp`
 - `IslandQuest.h / .cpp`
 - `SoundManager.h / .cpp`
+- `GameSettingsMenu.h / .cpp`
 - `UIOverlay.h / .cpp`
 - `PostProcess.h / .cpp`
 - `LostIslandSetpiece.h / .cpp`
@@ -457,7 +523,7 @@ Important files and folders include:
 
 - The project uses multiple shader programs and render passes rather than a single global shader.
 - The project combines graphics features with gameplay systems.
-- The UI and menu screens are custom rendered.
-- Audio is handled through irrKlang.
+- The UI, menu, and settings systems are custom rendered.
+- Audio is handled through irrKlang with layered biome ambience.
 - The final objective is to collect three keys, unlock the Lost Island, and reach it.
 - The most important advanced rendering additions are PCSS soft shadows, the sun cycle, and god rays.

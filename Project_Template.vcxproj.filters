@@ -57,6 +57,9 @@
     <ClCompile Include="LostIslandSetpiece.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="GameSettingsMenu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="helper\scene.h">
@@ -99,6 +102,9 @@
       <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="LostIslandSetpiece.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="GameSettingsMenu.h">
       <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>
