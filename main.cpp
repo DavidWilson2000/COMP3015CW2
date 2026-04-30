@@ -1,10 +1,8 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
-
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-
 #include <algorithm>
 #include <cstddef>
 #include <cmath>
@@ -18,9 +16,7 @@
 #include <vector>
 #include <unordered_map>
 #include <cctype>
-
 #define STB_IMAGE_IMPLEMENTATION
-
 #include "helper/stb/stb_image.h"
 #include "SimpleOBJLoader.h"
 #include "PostProcess.h"
@@ -33,6 +29,11 @@
 #include "WorldGen.h"
 #include "RenderTypes.h"
 #include "WorldRenderer.h"
+
+
+
+// Core application configuration, main.cpp acts as the coordinator for the game: it creates the window, loads resources, updates gameplay systems, and runs the render pipeline.
+// Larger systems such as world generation, static world rendering, UI, audio, quests and post-processing are split into their own files.
 
 
 const unsigned int SCR_WIDTH = 1280;
@@ -414,19 +415,106 @@ float skyboxVertices[] = {
      1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f
 };
 
+
+// Resource loading helpers.
+// These helpers make the packaged build more robust by trying the
+// requested path first, then a few parent-folder fallbacks. This is
+// useful when the game is launched from Visual Studio or directly
+// from the x64/Debug folder.
+
+
+bool rawFileExists(const std::string& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    return file.good();
+}
+
+std::vector<std::string> makeResourcePathCandidates(const std::string& path)
+{
+    return {
+        path,
+        "../" + path,
+        "../../" + path,
+        "../../../" + path
+    };
+}
+
+bool resolveResourcePath(
+    const std::string& requestedPath,
+    std::string& resolvedPath,
+    const std::string& label,
+    bool logSuccess = true,
+    bool logFailure = true)
+{
+    const std::vector<std::string> candidates = makeResourcePathCandidates(requestedPath);
+
+    for (const std::string& candidate : candidates)
+    {
+        if (rawFileExists(candidate))
+        {
+            resolvedPath = candidate;
+
+            if (logSuccess)
+            {
+                if (candidate == requestedPath)
+                {
+                    std::cout << "[Resource] Loaded " << label << ": " << candidate << std::endl;
+                }
+                else
+                {
+                    std::cout << "[Resource fallback] Loaded " << label
+                              << ": " << candidate
+                              << " (requested: " << requestedPath << ")"
+                              << std::endl;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    if (logFailure)
+    {
+        std::cerr << "[Resource missing] Could not find " << label
+                  << ": " << requestedPath << std::endl;
+
+        std::cerr << "Tried:" << std::endl;
+        for (const std::string& candidate : candidates)
+        {
+            std::cerr << "  - " << candidate << std::endl;
+        }
+    }
+
+    return false;
+}
+
 std::string readTextFile(const std::string& path)
 {
-    std::ifstream file(path);
-    if (!file)
+    std::string resolvedPath;
+    if (!resolveResourcePath(path, resolvedPath, "text/shader file"))
     {
-        std::cerr << "Failed to open file: " << path << std::endl;
         return "";
     }
+
+    std::ifstream file(resolvedPath);
+    if (!file)
+    {
+        std::cerr << "Failed to open resolved file: " << resolvedPath << std::endl;
+        return "";
+    }
+
     std::stringstream buffer;
     buffer << file.rdbuf();
+
+    std::cout << "[Shader/Text] Read " << resolvedPath
+              << " (" << buffer.str().size() << " bytes)" << std::endl;
+
     return buffer.str();
 }
 
+// Compiles one GLSL shader stage and prints compiler errors to the
+// console. Keeping these logs visible makes shader issues easier to
+// diagnose during marking and video demonstration.
 GLuint compileShader(GLenum type, const std::string& src)
 {
     GLuint shader = glCreateShader(type);
@@ -445,24 +533,45 @@ GLuint compileShader(GLenum type, const std::string& src)
     return shader;
 }
 
+// Builds a complete shader program from vertex/fragment shader files.
+// The debug logs show exactly which shader pair was loaded and linked.
 GLuint createShaderProgramFromFiles(const std::string& vertPath, const std::string& fragPath)
 {
+    std::cout << "[Shader] Creating program from: "
+              << vertPath << " + " << fragPath << std::endl;
+
     std::string vertSrc = readTextFile(vertPath);
     std::string fragSrc = readTextFile(fragPath);
+
+    if (vertSrc.empty() || fragSrc.empty())
+    {
+        std::cerr << "[Shader] Missing shader source. Program may fail: "
+                  << vertPath << " + " << fragPath << std::endl;
+    }
+
     GLuint vs = compileShader(GL_VERTEX_SHADER, vertSrc);
     GLuint fs = compileShader(GL_FRAGMENT_SHADER, fragSrc);
     GLuint program = glCreateProgram();
     glAttachShader(program, vs);
     glAttachShader(program, fs);
     glLinkProgram(program);
+
     GLint success = 0;
     glGetProgramiv(program, GL_LINK_STATUS, &success);
     if (!success)
     {
         char infoLog[2048];
         glGetProgramInfoLog(program, 2048, nullptr, infoLog);
-        std::cerr << "Program link error:\n" << infoLog << std::endl;
+        std::cerr << "Program link error for "
+                  << vertPath << " + " << fragPath
+                  << ":\n" << infoLog << std::endl;
     }
+    else
+    {
+        std::cout << "[Shader] Linked program successfully: "
+                  << vertPath << " + " << fragPath << std::endl;
+    }
+
     glDeleteShader(vs);
     glDeleteShader(fs);
     return program;
@@ -584,23 +693,39 @@ void setInt(GLuint shader, const char* name, int value)
     glUniform1i(glGetUniformLocation(shader, name), value);
 }
 
+// Loads an OBJ model into an OpenGL VAO/VBO using the module-compatible
+// SimpleOBJ loader. The fallback resolver allows models to be found
+// from the packaged build folder as well as from source-run paths.
 bool loadOBJModel(const std::string& path, ModelMesh& outModel)
 {
+    std::string resolvedPath;
+    if (!resolveResourcePath(path, resolvedPath, "OBJ model"))
+    {
+        return false;
+    }
+
     std::vector<float> vertices;
     std::string warning;
     std::string error;
 
-    if (!SimpleOBJ::loadOBJInterleaved(path, vertices, &warning, &error))
+    if (!SimpleOBJ::loadOBJInterleaved(resolvedPath, vertices, &warning, &error))
     {
         if (!warning.empty()) std::cout << "OBJ warning: " << warning << std::endl;
         if (!error.empty()) std::cerr << "OBJ error: " << error << std::endl;
-        std::cerr << "Failed to load OBJ: " << path << std::endl;
+
+        std::cerr << "[OBJ] Failed to load model: " << resolvedPath
+                  << " (requested: " << path << ")" << std::endl;
+
         return false;
     }
 
     if (!warning.empty())
         std::cout << "OBJ warning: " << warning << std::endl;
 
+    // Calculate model bounds from the interleaved vertex data.
+    // WorldRenderer.cpp uses these bounds to auto-scale and ground imported
+    // models such as tree.obj. Without this, min/max stay at 0 and trees can
+    // appear missing, huge, or incorrectly placed.
     glm::vec3 minBounds(std::numeric_limits<float>::max());
     glm::vec3 maxBounds(-std::numeric_limits<float>::max());
 
@@ -635,15 +760,19 @@ bool loadOBJModel(const std::string& path, ModelMesh& outModel)
     outModel.vertexCount = vertices.size() / 8;
     outModel.loaded = true;
 
-    std::cout << "Loaded OBJ model: " << path
+    std::cout << "[OBJ] Loaded model: " << resolvedPath
               << " | vertices: " << outModel.vertexCount
-              << " | bounds min(" << outModel.minBounds.x << ", " << outModel.minBounds.y << ", " << outModel.minBounds.z << ")"
-              << " max(" << outModel.maxBounds.x << ", " << outModel.maxBounds.y << ", " << outModel.maxBounds.z << ")"
+              << " | bounds min(" << outModel.minBounds.x << ", "
+              << outModel.minBounds.y << ", " << outModel.minBounds.z << ")"
+              << " max(" << outModel.maxBounds.x << ", "
+              << outModel.maxBounds.y << ", " << outModel.maxBounds.z << ")"
               << std::endl;
 
     return true;
 }
 
+// Creates a GL texture from raw RGB data. This is used by the
+// procedural fallback textures when image files are missing.
 GLuint createTextureFromRGBData(const std::vector<unsigned char>& data, int width, int height)
 {
     GLuint tex = 0;
@@ -674,8 +803,16 @@ GLuint createSolidColorTexture(unsigned char r, unsigned char g, unsigned char b
     return createTextureFromRGBData(data, w, h);
 }
 
+// Loads a texture from disk with fallback path resolution. If this
+// returns 0, the caller can use one of the procedural texture fallbacks.
 GLuint loadTextureFromFile(const std::string& path, bool flipVertically = true)
 {
+    std::string resolvedPath;
+    if (!resolveResourcePath(path, resolvedPath, "texture"))
+    {
+        return 0;
+    }
+
     if (flipVertically)
     {
         stbi_set_flip_vertically_on_load(true);
@@ -688,11 +825,12 @@ GLuint loadTextureFromFile(const std::string& path, bool flipVertically = true)
     int width = 0;
     int height = 0;
     int channels = 0;
-    unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 0);
+    unsigned char* data = stbi_load(resolvedPath.c_str(), &width, &height, &channels, 0);
 
     if (!data)
     {
-        std::cerr << "Failed to load texture: " << path << std::endl;
+        std::cerr << "[Texture] Failed to load resolved texture: " << resolvedPath
+                  << " (requested: " << path << ")" << std::endl;
         return 0;
     }
 
@@ -715,16 +853,19 @@ GLuint loadTextureFromFile(const std::string& path, bool flipVertically = true)
 
     stbi_image_free(data);
 
-    std::cout << "Loaded texture: " << path << " (" << width << "x" << height << ", channels: " << channels << ")" << std::endl;
+    std::cout << "[Texture] Loaded: " << resolvedPath
+              << " (" << width << "x" << height
+              << ", channels: " << channels << ")" << std::endl;
 
     return tex;
 }
 
 
+// Lightweight wrapper used by asset lookups such as fish PNG loading.
 bool fileExists(const std::string& path)
 {
-    std::ifstream file(path, std::ios::binary);
-    return file.good();
+    std::string resolvedPath;
+    return resolveResourcePath(path, resolvedPath, "file", false, false);
 }
 
 std::string makeFishTextureStem(const std::string& fishName)
@@ -761,6 +902,8 @@ std::vector<std::string> getFishTextureCandidates(const std::string& fishName)
     return candidates;
 }
 
+// Loads optional fish PNG artwork for the catch card and journal.
+// Missing fish images are allowed; the UI can display a fallback state.
 FishIconTexture loadFishIconTexture(const std::string& fishName)
 {
     FishIconTexture icon;
@@ -768,11 +911,13 @@ FishIconTexture loadFishIconTexture(const std::string& fishName)
 
     const std::vector<std::string> candidates = getFishTextureCandidates(fishName);
     std::string resolvedPath;
+
     for (const auto& candidate : candidates)
     {
-        if (fileExists(candidate))
+        if (resolveResourcePath(candidate, resolvedPath, "fish PNG", false, false))
         {
-            resolvedPath = candidate;
+            std::cout << "[Fish PNG] Found image for " << fishName
+                      << ": " << resolvedPath << std::endl;
             break;
         }
     }
@@ -867,6 +1012,8 @@ void TriggerCatchBanner(const std::string& text, float duration, float shakeStre
     }
 }
 
+// Registers every fish from every zone so the journal can display
+// undiscovered entries before the player has caught them.
 void RegisterFishJournalEntries()
 {
     gFishJournal.clear();
@@ -1110,6 +1257,8 @@ void setupShadowMap()
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+// Fishing zones define the main biome/gameplay regions. Each zone has
+// its own fish pool, fog values, water tint, and danger amount.
 void setupZones()
 {
     zones.push_back({ glm::vec3(12.0f, 0.0f, 10.0f), 6.5f,
@@ -1204,6 +1353,8 @@ void initialiseEnvironmentBlend()
     gEnvironmentBlend.danger = getTargetWorldDanger();
 }
 
+// Smoothly blends the world atmosphere toward the current zone instead
+// of instantly snapping fog/water colours when the boat crosses a zone.
 void updateEnvironmentBlend(float dt)
 {
     const float blendStrength = 1.0f - std::exp(-2.4f * dt);
@@ -1275,6 +1426,8 @@ const char* getSunCycleLabel()
     return gAnimateSunCycle ? "Cycle" : "Fixed";
 }
 
+// Calculates the dynamic sun state used by lighting, shadows, water,
+// sky colour, and god rays. F10 toggles whether the cycle animates.
 SunState EvaluateSunState(float time)
 {
     SunState sun;
@@ -1572,6 +1725,8 @@ void spawnZoneAmbientParticles(float time)
     }
 }
 
+// Applies danger-zone gameplay effects such as hull damage, warning
+// feedback, and forced recovery if the boat is destroyed.
 void updateDangerGameplay(GLFWwindow* window, float dt)
 {
     if (hullWarningTimer > 0.0f) hullWarningTimer -= dt;
@@ -1720,6 +1875,8 @@ FishData catchFishForMinigameResult(FishData fish, float timingScore)
     return fish;
 }
 
+// Attempts to start/carry out fishing depending on the player's zone,
+// cooldown, cargo space, rod level, and minigame setting.
 void tryFishing(GLFWwindow* window)
 {
     std::string failMessage;
@@ -1805,6 +1962,7 @@ void resolveFishingMinigame(GLFWwindow* window, const FishingMinigameResult& res
     awardFishCatch(window, fish, result.timingScore);
 }
 
+// Converts stored fish into gold when the player is at the dock.
 void sellCargo()
 {
     if (!isAtDock() || cargo.empty()) return;
@@ -1886,6 +2044,9 @@ void repairHull()
     TriggerCatchBanner("HULL REPAIRED", 1.1f);
 }
 
+// Material binding helper for the main world shader. The materialType
+// uniform lets the shader apply different responses for wood, rock,
+// grass, boat, buoy/markers, and emissive-style light objects.
 void bindMaterial(GLuint shader, GLuint textureID, int materialType, float tiling)
 {
     glActiveTexture(GL_TEXTURE0);
@@ -1933,6 +2094,9 @@ void drawModel(GLuint shader, const ModelMesh& modelMesh, const glm::mat4& model
     glBindVertexArray(0);
 }
 
+// Renders dynamic world geometry that still lives in main.cpp.
+// Static set dressing is handled by WorldRenderer.cpp, while the boat
+// is kept here because it depends on movement, cargo, and water bobbing.
 void renderWorldGeometry(GLuint shader, bool depthPass, float time)
 {
     auto setMat = [&](GLuint tex, int type, float tiling)
@@ -2029,6 +2193,9 @@ void renderWorldGeometry(GLuint shader, bool depthPass, float time)
     } 
 }
 
+// First render pass: render the world from the sun/light point of view
+// into the shadow map. The main shader and water shader sample this
+// texture later for PCF/PCSS shadowing.
 void renderDepthPass(const glm::mat4& lightSpaceMatrix, float time)
 {
     glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
@@ -2043,6 +2210,7 @@ void renderDepthPass(const glm::mat4& lightSpaceMatrix, float time)
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+// Draws the atmospheric skybox behind the scene.
 void renderSkybox(const glm::mat4& view, const glm::mat4& projection, float time)
 {
     glDepthFunc(GL_LEQUAL);
@@ -2061,6 +2229,8 @@ void renderSkybox(const glm::mat4& view, const glm::mat4& projection, float time
     glDepthFunc(GL_LESS);
 }
 
+// Draws the animated water surface using its own shader so wave motion,
+// zone tint, fog, lighting, and shadow sampling can be handled separately.
 void renderWater(const glm::mat4& view, const glm::mat4& projection, const glm::mat4& lightSpaceMatrix, const SunState& sun, const glm::vec3& viewPos, float time)
 {
     glUseProgram(waterShader);
@@ -2090,6 +2260,8 @@ void renderWater(const glm::mat4& view, const glm::mat4& projection, const glm::
     drawPlane(waterShader, waterModel);
 }
 
+// Main lit scene pass. This binds lighting, fog, shadow settings and
+// then renders the world geometry using the main material shader.
 void renderLitScene(const glm::mat4& view, const glm::mat4& projection, const glm::mat4& lightSpaceMatrix, const SunState& sun, const glm::vec3& viewPos, float time)
 {
     glUseProgram(basicShader);
@@ -2116,6 +2288,8 @@ void renderLitScene(const glm::mat4& view, const glm::mat4& projection, const gl
     renderWorldGeometry(basicShader, false, time);
 }
 
+// Final transparent particle pass for wake, splashes, ambient particles,
+// Lost Island aura particles, and victory celebration effects.
 void renderParticles(const glm::mat4& view, const glm::mat4& projection)
 {
     std::vector<ParticleVertex> alive;
@@ -2151,6 +2325,10 @@ int main()
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
+
+    // Create a large bordered window and centre it on the primary monitor.
+    // This keeps the coursework demo readable while still behaving like
+    // a normal desktop game window.
 
     GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
     const GLFWvidmode* mode = glfwGetVideoMode(primaryMonitor);
@@ -2193,6 +2371,13 @@ int main()
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_PROGRAM_POINT_SIZE);
 
+    std::cout << "[Startup] OpenGL initialized." << std::endl;
+    std::cout << "[Startup] Window size: " << gWindowWidth << "x" << gWindowHeight << std::endl;
+    std::cout << "[Startup] Loading shaders, models, textures and audio..." << std::endl;
+
+    // Shader programs are loaded up front. Each one owns a different
+    // render stage: world materials, water, depth shadows, particles,
+    // skybox, and fullscreen post-processing.
     basicShader = createShaderProgramFromFiles(BASIC_VERT_PATH, BASIC_FRAG_PATH);
     waterShader = createShaderProgramFromFiles(WATER_VERT_PATH, WATER_FRAG_PATH);
     depthShader = createShaderProgramFromFiles(DEPTH_VERT_PATH, DEPTH_FRAG_PATH);
@@ -2206,6 +2391,9 @@ int main()
         std::cerr << "Failed to initialize post-processing pipeline." << std::endl;
     }
 
+    // Upload reusable meshes and render targets.
+    // setupGeneratedIslandMeshes() lives in WorldGen.cpp and creates the
+    // procedural island/grass meshes used by WorldRenderer.cpp.
     setupCube();
     setupGeneratedIslandMeshes();
     setupPlane();
@@ -2216,6 +2404,8 @@ int main()
     RegisterFishJournalEntries();
     initialiseEnvironmentBlend();
 
+    // Load imported models. The sword has a fallback path because older
+    // project versions stored it in a slightly different folder.
     loadOBJModel("media/models/boat.obj", boatModel);
     if (!loadOBJModel("media/sword.obj", swordModel))
     {
@@ -2226,23 +2416,49 @@ int main()
     // Keep tree.obj, tree.mtl and treecolorpallet.png in media/models/.
     loadOBJModel("media/models/tree.obj", treeModel);
 
+    // Load material textures. If a file is missing, procedural fallback
+    // textures are generated so the scene still remains playable.
     woodTex = loadTextureFromFile("media/wood.jpg");
-    if (woodTex == 0) woodTex = createWoodTexture();
+    if (woodTex == 0)
+    {
+        std::cout << "[Fallback] Using procedural wood texture." << std::endl;
+        woodTex = createWoodTexture();
+    }
 
     rockTex = loadTextureFromFile("media/rock.jpg");
-    if (rockTex == 0) rockTex = createRockTexture();
+    if (rockTex == 0)
+    {
+        std::cout << "[Fallback] Using procedural rock texture." << std::endl;
+        rockTex = createRockTexture();
+    }
 
     grassTex = loadTextureFromFile("media/grass.jpg");
-    if (grassTex == 0) grassTex = createGrassTexture();
+    if (grassTex == 0)
+    {
+        std::cout << "[Fallback] Using procedural grass texture." << std::endl;
+        grassTex = createGrassTexture();
+    }
 
     treeTex = loadTextureFromFile("media/models/treecolorpallet.png");
-    if (treeTex == 0) treeTex = grassTex;
+    if (treeTex == 0)
+    {
+        std::cout << "[Fallback] Tree palette missing. Reusing grass texture for tree model." << std::endl;
+        treeTex = grassTex;
+    }
 
     boatTex = loadTextureFromFile("textures/boat.jpg");
-    if (boatTex == 0) boatTex = createBoatTexture();
+    if (boatTex == 0)
+    {
+        std::cout << "[Fallback] Using procedural boat texture." << std::endl;
+        boatTex = createBoatTexture();
+    }
 
     buoyTex = loadTextureFromFile("textures/buoy.jpg");
-    if (buoyTex == 0) buoyTex = createBuoyTexture();
+    if (buoyTex == 0)
+    {
+        std::cout << "[Fallback] Using procedural buoy texture." << std::endl;
+        buoyTex = createBuoyTexture();
+    }
 
     // Bright marker textures used to identify each fishing island from far away.
     zoneMarkerTex[0] = createSolidColorTexture(255, 190, 70);   // Harbour Waters
@@ -2251,17 +2467,41 @@ int main()
 
     skyboxCubemap = createFallbackCubemap();
 
-    if (!gSound.Init("media/sounds"))
+    // Audio also uses fallback folder attempts so the packaged Debug
+    // build and the Visual Studio working directory both have a chance
+    // to find media/sounds.
+    bool soundReady = false;
+    const std::vector<std::string> soundFolders = {
+        "media/sounds",
+        "../media/sounds",
+        "../../media/sounds",
+        "../../../media/sounds"
+    };
+
+    for (const std::string& soundFolder : soundFolders)
     {
-        std::cerr << "Failed to initialize sound manager." << std::endl;
+        std::cout << "[Audio] Trying sound folder: " << soundFolder << std::endl;
+
+        if (gSound.Init(soundFolder))
+        {
+            std::cout << "[Audio] Sound manager initialized using: "
+                      << soundFolder << std::endl;
+
+            gSound.PlayBackgroundLoop();
+            soundReady = true;
+            break;
+        }
     }
-    else
+
+    if (!soundReady)
     {
-        gSound.PlayBackgroundLoop();
+        std::cerr << "[Audio] Failed to initialize sound manager with any fallback path." << std::endl;
     }
 
     float lastFrame = 0.0f;
 
+    // Main game loop: input/menu handling, gameplay updates, atmosphere,
+    // audio, render passes, UI construction, and buffer swap.
     while (!glfwWindowShouldClose(window))
     {
         float currentFrame = static_cast<float>(glfwGetTime());
@@ -2270,6 +2510,8 @@ int main()
 
         glfwPollEvents();
 
+        // One-shot menu input handling. These flags prevent a single
+        // key press from toggling menus multiple times across frames.
         if (keys[GLFW_KEY_ENTER] && !startPressed)
         {
             if (!gGameStarted)
@@ -2394,6 +2636,8 @@ int main()
 
         if (!gameplayBlocked)
         {
+            // Core gameplay update only runs when start/pause/journal/settings
+            // overlays are not blocking player control.
             if (gCameraMode == CameraMode::FreeLook)
             {
                 const float yawSpeed = 90.0f * deltaTime;
@@ -2413,6 +2657,8 @@ int main()
             const bool hadWonBeforeQuestUpdate = gIslandQuest.HasWon();
             const std::string statusBeforeSystemMessages = lastCatchText;
             gIslandQuest.Update(boat.position, lastCatchText, catchMessageTimer);
+            // Development shortcut used to speed up video/testing progression.
+            // It is documented in the README as a debug helper.
             gIslandQuest.HandleTestGoldHotkey(keys[GLFW_KEY_G], totalMoney, lastCatchText, catchMessageTimer);
             if (gIslandQuest.GetCollectedKeyCount() != keysBeforeQuestUpdate ||
                 gIslandQuest.HasWon() != hadWonBeforeQuestUpdate ||
@@ -2592,6 +2838,11 @@ int main()
         glm::mat4 lightView = glm::lookAt(lightPos, lightTarget, glm::vec3(0, 1, 0));
         glm::mat4 lightSpaceMatrix = lightProjection * lightView;
 
+        // Render pipeline:
+        // 1) shadow depth pass into the shadow map
+        // 2) render scene into the post-process framebuffer
+        // 3) fullscreen post-process pass
+        // 4) custom UI/settings overlay
         renderDepthPass(lightSpaceMatrix, currentFrame);
 
         gPostProcessor.BeginScene(clearColor);
@@ -2621,6 +2872,8 @@ int main()
         }
         gPostProcessor.Render(gPostMode, currentFrame, sunScreenPos, sun.color, sunVisibility, sun.dayFactor);
 
+        // Build a single HUDState snapshot for the UI renderer. This keeps
+        // UIOverlay from directly owning or mutating gameplay systems.
         HUDState hud;
         hud.screenWidth = gWindowWidth;
         hud.screenHeight = gWindowHeight;
@@ -2712,10 +2965,13 @@ int main()
         glfwSwapBuffers(window);
     }
 
+    // Cleanup GL resources and shutdown helper systems before exiting.
     if (boatModel.vbo != 0) glDeleteBuffers(1, &boatModel.vbo);
     if (boatModel.vao != 0) glDeleteVertexArrays(1, &boatModel.vao);
     if (swordModel.vbo != 0) glDeleteBuffers(1, &swordModel.vbo);
     if (swordModel.vao != 0) glDeleteVertexArrays(1, &swordModel.vao);
+    if (treeModel.vbo != 0) glDeleteBuffers(1, &treeModel.vbo);
+    if (treeModel.vao != 0) glDeleteVertexArrays(1, &treeModel.vao);
 
     for (auto& entry : gFishIconTextures)
     {
