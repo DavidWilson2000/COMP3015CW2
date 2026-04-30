@@ -1,529 +1,816 @@
-# Dredge-Style Fishing Prototype (Coursework 2)
+# Dredge-Style Fishing Prototype — COMP3015 Coursework 2
 
 ## Overview
 
-This project is a Dredge-inspired OpenGL fishing game prototype built in C++ using GLFW, GLAD, GLM, custom GLSL shaders, and irrKlang for audio.
+This project is a **Dredge-inspired OpenGL fishing game prototype** built in C++ using GLFW, GLAD, GLM, custom GLSL shaders, and irrKlang audio.
 
-The project combines graphics programming techniques from the shader lectures with a playable game loop. Rather than presenting isolated shader demos, the work integrates rendering, post-processing, shadows, particles, UI, audio, and progression systems into a complete fishing game experience.
+The project was designed as a playable game scene rather than a static shader showcase. The player sails a small boat between fishing zones, catches and sells fish, upgrades the boat, survives dangerous waters, collects three hidden keys, unlocks the Lost Island, and reaches the final shrine to win.
 
-The player sails between fishing zones, catches fish, sells cargo at the dock, upgrades the boat, survives dangerous water, collects three hidden keys, unlocks the Lost Island, and reaches the final shrine to win.
-
-The main goal of Coursework 2 was to combine multiple graphics features into an original scene that behaves like a game rather than a static rendering showcase.
+The main aim of the coursework was to combine advanced shader features with an original interactive scene. The final project integrates rendering, procedural world generation, post-processing, shadows, particles, UI, audio, settings, and gameplay progression into one complete prototype.
 
 ---
 
-## How to run the executable
+## Public repository
 
-1. Open the Visual Studio solution for the project.
-2. Build the project in the correct configuration for your machine.
-3. Run the executable from Visual Studio, or run the built `.exe` from the output folder.
-4. Keep the resource folders in the correct relative paths, especially:
-   - `shader/`
-   - `media/models/`
-   - `media/sounds/`
-   - `media/fish/`
-   - `textures/`
-
-The project relies on relative asset paths, so shaders, textures, sounds, models, and fish PNGs must remain in the expected folders.
-
----
-
-## Controls
-
-### Core movement
-- **W / S** = move forward / backward
-- **A / D** = steer left / right
-
-### Fishing and economy
-- **E** = fish / cast
-- **M** = toggle fishing minigame on or off
-- **Space** = hook during fishing minigame
-- **R** = sell cargo at the dock
-- **1** = buy rod upgrade
-- **2** = buy engine upgrade
-- **3** = buy cargo upgrade
-- **4** = repair hull at the dock
-
-### Menus and progression
-- **Enter** = start game
-- **P** = pause / help screen
-- **J** = open fish journal
-- **Left / Right Arrow** = change fish journal page
-- **O** = open / close settings menu
-- **Up / Down** = move through settings menu
-- **Left / Right** = adjust selected setting
-- **R** (inside settings menu) = reset settings to defaults
-
-### Camera
-- **C** = toggle camera mode
-- **Arrow Keys** = look around in free-look camera mode
-
-### Shader / rendering controls
-- **F5** = edge detection
-- **F6** = blur
-- **F7** = night vision
-- **F8** = normal rendering
-- **F9** = toggle shadow filter (**PCF / PCSS**)
-- **F10** = toggle sun cycle
-- **F11** = god rays
-
-### Other
-- **Esc** = quit
-- **G** = debug gold hotkey used during testing
-
----
-
-## High-level design
-
-I designed this as a playable atmospheric fishing game rather than a single-scene shader test.
-
-The project has three main layers:
-
-1. **Rendering layer**  
-   Handles shaders, textures, shadow mapping, post-processing, water, skybox, particles, lighting, and fullscreen effects.
-
-2. **Gameplay layer**  
-   Handles fishing, upgrades, cargo, hull damage, danger, key collection, Lost Island unlock, and victory conditions.
-
-3. **Feedback / interface layer**  
-   Handles the HUD, fish journal, pause/help screens, catch cards, banners, quest display, victory presentation, and settings menu.
-
-The main design goal was to make the rendering work support the gameplay loop. Zone fog, water tint, danger, audio layering, shadow presentation, and post-processing are all tied to player experience rather than being disconnected technical demos.
-
----
-
-## Main program flow
-
-The project is orchestrated from `main.cpp`.
-
-This file:
-- creates the OpenGL window
-- loads shaders
-- loads models and textures
-- sets up shadow mapping
-- sets up the post-processing pipeline
-- initialises audio and UI
-- registers fish journal data
-- runs the main update/render loop
-
-Inside the loop, the game:
-- processes input
-- updates the boat and fishing systems
-- updates danger, hull damage, and quest progression
-- updates particles and audio
-- renders a shadow depth pass
-- renders the world scene
-- applies post-processing
-- builds and renders the UI
-- renders the settings menu when opened
-
-This makes `main.cpp` the central coordinator for the project, while individual systems remain separated into their own files to keep responsibilities clearer.
-
----
-
-## Main classes / systems
-
-### `FishingMinigame`
-This class manages the optional fishing timing minigame. It handles:
-- whether the minigame is enabled
-- whether it is active
-- marker timing
-- success/failure logic
-- “good hook” and “perfect hook” style outcomes
-
-### `IslandQuest`
-This class manages progression through the three key objectives and the final Lost Island unlock. It tracks:
-- collected keys
-- unlock state
-- win state
-- final island goal position
-- quest text shown in the HUD
-- fog behaviour that hides the Lost Island before it is unlocked
-
-### `SoundManager`
-This wraps irrKlang and handles:
-- sound system setup
-- background loop
-- boat motor audio
-- splash and reel effects
-- zone-layer ambience
-- audio category controls for:
-  - master volume
-  - music volume
-  - SFX volume
-
-The background ambience remains active, while biome-specific loops fade in and out as the player approaches or leaves different island regions.
-
-### `UIOverlay`
-This system renders the custom HUD and menu screens. It uses a `HUDState` structure to receive all data needed for:
-- gold
-- cargo
-- upgrades
-- hull integrity
-- danger
-- quest state
-- caught fish card
-- journal pages
-- start, pause, and victory overlays
-
-### `GameSettingsMenu`
-This is a separate settings system used to keep the main file cleaner. It stores and renders:
-- brightness
-- master volume
-- music volume
-- SFX volume
-
-This improves usability and presentation while also making the project feel more like a complete game rather than only a prototype scene.
-
-### `PostProcessor`
-This handles the fullscreen post-process pass and applies:
-- edge detection
-- blur
-- night vision
-- god rays
-
-### `LostIslandSetpiece`
-This builds the final altar / shrine transforms and sword placement for the Lost Island.
-
----
-
-## Gameplay loop
-
-The gameplay loop works as follows:
-
-1. The player starts at the dock.
-2. They sail into fishing zones.
-3. Each zone has a different fish pool, water tint, fog values, danger level, and audio mood.
-4. The player catches fish either instantly or through the optional fishing minigame.
-5. Fish are stored as cargo.
-6. The player returns to the dock to sell cargo for gold.
-7. Gold is used for rod, engine, cargo, and repair progression.
-8. Dangerous water damages the hull and can cause engine stutter or forced return to dock.
-9. At sufficient rod progression, the player can collect three hidden keys.
-10. Once all keys are collected, the Lost Island unlocks.
-11. Reaching the Lost Island triggers the final win state and celebration.
-
-This was designed to make the coursework feel like a real game rather than a graphics-only sandbox.
-
----
-
-## Rendering pipeline
-
-The rendering pipeline is split into multiple passes and shader programs.
-
-### 1. Depth pass
-The scene is rendered from the light’s point of view into a depth texture.  
-This depth texture is then sampled during the main scene pass for shadow calculation.
-
-### 2. Main lit scene pass
-The world geometry is rendered using the main lit shader.  
-This includes:
-- dock geometry
-- island geometry
-- boat
-- Lost Island setpiece
-- buoys
-- world props
-
-### 3. Water pass
-The animated water plane is rendered separately using a dedicated water shader.
-
-### 4. Skybox pass
-The skybox is rendered to provide atmosphere and make the scene feel less flat.
-
-### 5. Particle pass
-Point-based particles are rendered for:
-- boat wake
-- splash feedback
-- ambient zone particles
-- Lost Island aura particles
-- win-state celebration effects
-
-### 6. Post-process pass
-The rendered scene is passed through a fullscreen post-process stage which can apply image-space effects.
-
----
-
-## Advanced graphics features demonstrated
-
-This project combines multiple techniques from the shader rubric into one pipeline rather than implementing only one isolated effect.
-
-### Shadow mapping
-The scene uses a dedicated depth pass and shadow map texture so shadows can be sampled in the main lit pass.
-
-### PCF / PCSS shadow filtering
-The shadow system supports a live toggle between:
-- **PCF** for a simpler filtered shadow result
-- **PCSS** for softer penumbra-style shadows
-
-This makes the shadows more visually convincing than a single hard shadow compare and gives a clear demonstration feature for the video.
-
-### Dynamic sun cycle
-The lighting system includes a time-driven sun cycle that changes:
-- light direction
-- light colour
-- intensity
-- ambient contribution
-
-This means the scene lighting changes over time rather than remaining static.
-
-### God rays
-A fullscreen post-process mode computes light shafts based on the sun’s screen position and visibility.  
-This gives the scene a stronger atmospheric effect when the camera faces toward the bright sun direction.
-
-### Additional image processing
-The post-process system also supports:
-- edge detection
-- blur
-- night vision
-
-### Animated water
-The water surface is animated over time and is lit separately from the rest of the world.  
-It also responds to zone tint, fog, and mood settings.
-
-### Particle effects
-Particles are used both as atmosphere and gameplay feedback:
-- wake particles behind the boat
-- splash particles on fish catch
-- aura particles around the Lost Island
-- victory particles on completion
-
-### Skybox and atmosphere
-The project includes a skybox and dynamic fog/water colour blending to make each zone feel visually distinct.
-
-### Adjustable brightness
-A settings menu allows the player to adjust overall scene brightness without changing the underlying shader modes. This improves usability and also shows consideration for presentation and accessibility.
-
----
-
-## Audio design
-
-Audio is no longer only a single background loop.
-
-The project now layers audio in the following way:
-- a main background ambience remains active
-- the boat motor fades based on speed
-- splash and reel SFX play during interaction
-- biome-specific ambient layers fade in and out as the player approaches or leaves island zones
-- Lost Island uses its own audio mood
-- the settings menu allows:
-  - master volume control
-  - music volume control
-  - SFX volume control
-
-This improves atmosphere and helps address one of the weaknesses from the earlier coursework feedback, where more background music/audio would have helped.
-
----
-
-## What makes this project special
-
-The strongest part of the project is that the shader work is not isolated from the gameplay.
-
-Examples:
-- different fishing zones also change fog, tint, danger, and ambience
-- the Lost Island is hidden by progression-based fog until unlocked
-- shadows affect both the world and the water presentation
-- post-processing can be toggled during live play for direct inspection
-- settings menu controls brightness and audio
-- UI feedback makes the gameplay systems readable instead of hidden
-- atmosphere, progression, rendering, and sound are all tied together
-
-A simpler coursework solution could have shown one object with one shader.  
-This project instead behaves like a coordinated game scene with progression, feedback, atmosphere, and multiple interacting systems.
-
----
-
-## Research sources and originality
-
-This coursework uses ideas inspired by shader research/tutorial material, but the implementation was adapted to fit this specific project and integrated into the provided lab-style framework.
-
-The two key research-style features I focused on are:
-
-### 1. PCSS soft shadows
-I used the idea of moving from simple filtered shadow mapping toward contact-hardening style soft shadows.  
-My implementation adapts that idea into this coursework project so it can be toggled live against a simpler filtered version, making the difference visible during demonstration.
-
-### 2. God rays / light shafts
-I used the idea of radial light sampling in screen space to create sun shafts.  
-Rather than building a physically complete volumetric lighting system, I implemented a coursework-appropriate fullscreen version that fits the existing pipeline and works with the game’s sun direction logic.
-
-What makes the project original is not just the isolated shader ideas, but the fact that they are integrated into:
-- a fishing game loop
-- a quest system
-- a full UI
-- a settings menu
-- audio layering
-- danger and damage systems
-- zone-based atmosphere
-- a final unlockable objective
-
-### Starting point and adaptation
-The project began as a continuation of my CW1 work, but it was expanded well beyond the earlier shrine scene. My CW1 feedback noted that the earlier project had basic gameplay, limited UI, and a report that did not explain the implementation deeply enough. In this version I intentionally addressed those points by building a much fuller gameplay loop, stronger HUD/menu systems, better atmosphere/audio, and more advanced rendering features. :contentReference[oaicite:2]{index=2}
-
----
-
-## Software engineering decisions
-
-### Modularity
-The project is split into systems for:
-- fishing minigame logic
-- quest logic
-- audio
-- settings menu
-- UI/HUD rendering
-- post-processing
-- Lost Island setpiece transforms
-
-This made the project easier to maintain and debug.
-
-### UI state passing
-The UI does not directly query all game systems itself.  
-Instead, the game builds a `HUDState` object and passes it into the UI renderer.  
-This keeps the rendering layer cleaner and reduces tight coupling.
-
-### Separate settings menu file
-The settings menu was deliberately built in its own file to avoid overloading `main.cpp` even further. That kept input handling and rendering integration cleaner than mixing all menu code into the main loop.
-
-### Fallback resources
-Some textures use procedural fallback generation when file loading fails.  
-This improved robustness during development.
-
-### Relative resource paths
-The project relies on relative paths, which is simple for coursework use but requires careful packaging when submitting.
-
----
-
-## Performance / design trade-offs
-
-This project balances visual quality with practical coursework scope.
-
-Examples:
-- shadow mapping adds depth but requires an additional depth render pass
-- PCSS produces better-looking shadows but costs more than simpler PCF
-- post-processing improves scene style but adds a fullscreen pass
-- particles improve feedback and atmosphere but add update/render overhead
-- layered biome audio improves atmosphere but adds extra looping sounds to manage
-- custom UI and settings menus give full control but take more development effort than using a library
-
-For this coursework, these trade-offs were worthwhile because they made the final result more convincing and game-like.
-
----
-
-## Evaluation
-
-The strongest part of the project is that it now works as a complete prototype rather than only a collection of graphics features.
-
-The final version includes:
-- sailing and navigation
-- multiple fishing zones
-- optional fishing minigame
-- cargo and selling
-- upgrades
-- hull damage and repair
-- quest progression
-- journal and fish tracking
-- dynamic lighting and shadows
-- post-processing
-- particle feedback
-- layered biome audio
-- settings for brightness and volume
-- a final Lost Island objective
-- a victory state
-
-I am especially happy with how the UI and feedback systems developed, because they now communicate much more than the earliest prototype.
-
-If I had more time, I would improve:
-1. packaging and asset handling
-2. persistence / save systems
-3. deeper fish behaviour differences by biome
-4. more bespoke audio events within each zone
-5. even stronger inline shader documentation with direct source references
-
----
-
-## What I would do differently
-
-Knowing what I know now, I would:
-- lock the final merged gameplay/render branch earlier
-- document each render pass as it was added
-- keep a stricter asset naming convention
-- keep a more formal record of which research techniques were adapted and how
-- define the final settings/menu scope earlier in development
-
-One of the biggest challenges of this coursework was not writing one shader, but integrating many systems without breaking the earlier working build.
+GitHub repository:  
+**https://github.com/DavidWilson2000/COMP3015CW2**
 
 ---
 
 ## Video report
 
 Video walkthrough and explanation:  
-**[PASTE YOUR UNLISTED YOUTUBE LINK HERE]**
+**[PASTE YOUR UNLISTED YOUTUBE LINK HERE BEFORE SUBMISSION]**
 
-The video should show:
-- running the executable
-- all controls
-- sailing between zones
-- fishing with and without the minigame
-- cargo selling and upgrades
-- hull danger and repair
-- fish journal pages
-- settings menu use
+The video should demonstrate:
+
+- Running the executable from the submitted build/project.
+- Core boat movement and camera controls.
+- Sailing between different fishing zones.
+- Fishing with and without the optional minigame.
+- Cargo collection, selling, upgrades, and hull repair.
+- Fish journal pages and catch feedback.
+- Settings menu brightness and audio controls.
+- Dangerous water and hull damage.
+- Three-key quest progression.
+- Lost Island unlock and final victory state.
+- Procedural islands, imported tree models, island identifiers, and improved dock setpiece.
+- Shadow mapping and **F9** PCF/PCSS toggle.
+- Dynamic sun cycle with **F10**.
+- God rays with **F11**.
+- Image processing modes with **F5–F8**.
+- Pause/help screen, start screen, and victory screen.
+
+---
+
+## How to run
+
+1. Open the Visual Studio solution/project.
+2. Make sure the following `.cpp` files are included in the Visual Studio project:
+   - `main.cpp`
+   - `WorldGen.cpp`
+   - `WorldRenderer.cpp`
+   - `SoundManager.cpp`
+   - `UIOverlay.cpp`
+   - `GameSettingsMenu.cpp`
+   - `PostProcess.cpp`
+   - `FishingMinigame.cpp`
+   - `IslandQuest.cpp`
+   - `LostIslandSetpiece.cpp`
+3. Build the project in the correct configuration for your machine.
+4. Run the executable from Visual Studio, or run the built `.exe` from the output folder.
+5. Keep the required resource folders in their expected relative locations.
+
+Required folders include:
+
+```text
+shader/
+media/models/
+media/sounds/
+media/fish/
+textures/
+```
+
+The project uses relative paths, so models, textures, sounds, fish images, and shader files must remain in the correct folders.
+
+---
+
+## Controls
+
+### Core movement
+
+| Control | Action |
+|---|---|
+| **W / S** | Move boat forward / backward |
+| **A / D** | Steer left / right |
+| **C** | Toggle camera mode |
+| **Arrow Keys** | Look around in free-look camera mode |
+| **Esc** | Quit |
+
+### Fishing, economy, and upgrades
+
+| Control | Action |
+|---|---|
+| **E** | Fish / cast |
+| **M** | Toggle fishing minigame on/off |
+| **Space** | Hook during fishing minigame |
+| **R** | Sell cargo at the dock |
+| **1** | Buy rod upgrade |
+| **2** | Buy engine upgrade |
+| **3** | Buy cargo upgrade |
+| **4** | Repair hull at the dock |
+
+### Menus and progression
+
+| Control | Action |
+|---|---|
+| **Enter** | Start game |
+| **P** | Pause / help screen |
+| **J** | Open fish journal |
+| **Left / Right Arrow** | Change fish journal page |
+| **O** | Open / close settings menu |
+| **Up / Down** | Move through settings menu |
+| **Left / Right** | Adjust selected settings value |
+| **R** inside settings menu | Reset settings to defaults |
+
+### Shader and rendering controls
+
+| Control | Action |
+|---|---|
+| **F5** | Edge detection post-process |
+| **F6** | Blur post-process |
+| **F7** | Night vision post-process |
+| **F8** | Normal rendering |
+| **F9** | Toggle shadow filtering between PCF and PCSS |
+| **F10** | Toggle dynamic sun cycle |
+| **F11** | God rays / light shafts post-process |
+
+### Development / testing control
+
+| Control | Action |
+|---|---|
+| **G** | Debug/test gold and progression helper used during development |
+
+For final marking, this should either be clearly explained as a debug helper or removed/disabled if not wanted in the submitted build.
+
+---
+
+## Main gameplay loop
+
+The project has a complete game loop:
+
+1. The player starts at the dock.
+2. The player sails into different fishing zones.
+3. Each zone has its own fish pool, colour tint, fog, danger level, and ambience.
+4. The player catches fish either instantly or using the optional timing minigame.
+5. Fish are stored in cargo.
+6. The player returns to the dock to sell cargo for gold.
+7. Gold is spent on rod, engine, cargo, and hull repair upgrades.
+8. Dangerous water damages the hull and affects the boat.
+9. Higher rod progression allows the player to collect three hidden keys.
+10. Collecting all three keys unlocks the Lost Island.
+11. Reaching the Lost Island triggers the final victory state.
+
+This makes the scene function as a game rather than only a graphics demonstration.
+
+---
+
+## Full feature list
+
+### Core game features
+
+- Controllable boat movement.
+- Follow camera and free-look camera mode.
+- Multiple fishing zones.
+- Zone-specific fish pools.
+- Optional fishing minigame.
+- Cargo inventory.
+- Selling system at the dock.
+- Gold economy.
+- Rod upgrade.
+- Engine upgrade.
+- Cargo upgrade.
+- Hull damage and repair.
+- Dangerous water system.
+- Engine/hull penalty behaviour.
+- Three hidden key objectives.
+- Lost Island unlock.
+- Final shrine objective.
+- Victory screen and celebration feedback.
+
+### World and level features
+
+- Improved dock setpiece with planks, beams, support posts, rail detail, ladder, crates, barrels, side jetty, and a clean shed.
+- Procedural mini-island generation using radial falloff and noise.
+- Surface-following grass patches on islands.
+- Imported `tree.obj` model placement on islands.
+- Clean island indicators so zones can be identified from far away.
+- Lost Island altar setpiece.
+- Imported sword model / fallback sword transform.
+- Zone-based atmosphere and water mood.
+- Hidden/fogged Lost Island progression behaviour before unlock.
+
+### UI and feedback features
+
+- Start screen.
+- Pause/help overlay.
+- Main HUD.
+- Cargo and gold display.
+- Hull integrity display.
+- Upgrade cost display.
+- Zone name display.
+- Quest text display.
+- Fishing minigame UI.
+- Catch message feedback.
+- Catch banner feedback.
+- Fish journal.
+- Journal page navigation.
+- Victory screen.
+- Settings menu.
+- Brightness control.
+- Master/music/SFX volume controls.
+
+### Audio features
+
+- irrKlang audio integration.
+- Background ambience loop.
+- Boat motor loop that responds to movement.
+- Splash and reel/catch sound effects.
+- Zone-based ambience layers.
+- Lost Island audio mood.
+- Volume controls for master, music, and SFX.
+- Audio feedback tied to gameplay events.
+
+### Rendering and shader features
+
+- Multiple custom GLSL shader programs.
+- Lit material shader.
+- Shadow depth shader.
+- Water shader.
+- Particle shader.
+- Skybox shader.
+- Post-process shader.
+- Shadow mapping.
+- PCF shadow filtering.
+- PCSS-style soft shadow filtering.
+- Dynamic sun cycle.
+- Time-varying sun direction.
+- Dynamic light colour/intensity.
+- Fog and atmosphere blending.
+- Animated water surface.
+- Water tint based on current zone.
+- Water lighting and specular response.
+- Skybox rendering.
+- Particle effects.
+- Edge detection post-processing.
+- Blur post-processing.
+- Night vision post-processing.
+- God rays / screen-space light shafts.
+- Brightness adjustment through settings.
+
+---
+
+## Rendering pipeline
+
+The rendering pipeline is split into several passes.
+
+### 1. Shadow depth pass
+
+The world is rendered from the light’s point of view into a depth texture. This depth map is later sampled by the main shader and the water shader to calculate shadows.
+
+Relevant files:
+
+```text
+depth.vert
+depth.frag
+main.cpp
+basic.frag
+water.frag
+```
+
+### 2. Main lit world pass
+
+The world scene is rendered using the main material shader. This includes the dock, generated islands, imported tree models, island markers, boat, Lost Island setpiece, and props.
+
+Relevant files:
+
+```text
+basic.vert
+basic.frag
+WorldRenderer.cpp
+RenderTypes.h
+```
+
+### 3. Animated water pass
+
+The water is rendered separately using its own shader. It uses time-based animation, zone tint, fog, lighting, and shadow sampling.
+
+Relevant files:
+
+```text
+water.vert
+water.frag
+main.cpp
+```
+
+### 4. Skybox pass
+
+A skybox is rendered around the scene to give the game a stronger sense of place and atmosphere.
+
+Relevant files:
+
+```text
+skybox.vert
+skybox.frag
+main.cpp
+```
+
+### 5. Particle pass
+
+Particles are used for wake, splash, ambience, Lost Island aura, and win-state celebration effects.
+
+Relevant files:
+
+```text
+particle.vert
+particle.frag
+main.cpp
+```
+
+### 6. Post-process pass
+
+The rendered scene is passed through a fullscreen post-processing pipeline. Different modes can be toggled live.
+
+Relevant files:
+
+```text
+PostProcess.h
+PostProcess.cpp
+postprocess.vert
+postprocess.frag
+```
+
+---
+
+## Advanced graphics features
+
+### Shadow mapping
+
+The scene uses a dedicated shadow depth pass. The light-space depth texture is sampled during the main rendering pass and the water pass.
+
+This improves the visual depth of the scene and demonstrates a multi-pass rendering pipeline.
+
+### PCF and PCSS shadow filtering
+
+The project includes a live **F9** toggle between:
+
+- **PCF**: percentage-closer filtering for softened shadow sampling.
+- **PCSS-style filtering**: a blocker search and variable filter radius to imitate contact-hardening soft shadows.
+
+This is one of the clearest advanced shader demonstration features because the difference can be shown directly during the video.
+
+### Dynamic sun cycle
+
+The sun direction, colour, intensity, and ambient contribution change over time. The sun cycle can be toggled with **F10**.
+
+This affects:
+
+- world lighting
+- water lighting
+- shadow direction
+- fog mood
+- post-process god rays
+
+### God rays / light shafts
+
+The post-process shader includes a god rays mode toggled with **F11**. It uses the sun’s screen-space position and radial sampling to create stylised light shafts.
+
+This was implemented as a coursework-appropriate screen-space effect rather than a full volumetric lighting simulation.
+
+### Image processing modes
+
+The post-processing pipeline supports:
+
+- edge detection
+- blur
+- night vision
+- god rays
+- normal rendering reset
+
+These are controlled with **F5–F8** and **F11**.
+
+### Animated water
+
+The water shader uses time-based motion and surface variation. It reacts to lighting, fog, and zone tint so different parts of the map feel visually distinct.
+
+### Particle effects
+
+Particles are used for both atmosphere and gameplay feedback:
+
+- boat wake
+- splash effects
+- ambient zone particles
+- Lost Island aura
+- victory celebration particles
+
+---
+
+## Procedural world generation
+
+The island system was split into `WorldGen.h/.cpp`.
+
+The generated islands use:
+
+- radial falloff
+- boundary noise
+- rocky height variation
+- surface-following grass patches
+- generated vertex/normal/UV data
+- OpenGL VAO/VBO mesh upload
+
+This replaced earlier block-style islands with more natural mini-islands.
+
+Relevant files:
+
+```text
+WorldGen.h
+WorldGen.cpp
+WorldRenderer.cpp
+```
+
+The generated mesh layout matches the main shader:
+
+```text
+location 0 = position
+location 1 = normal
+location 2 = texture coordinate
+```
+
+---
+
+## Static world rendering
+
+The static world rendering was split into `WorldRenderer.h/.cpp`.
+
+This system handles:
+
+- improved dock rendering
+- generated island drawing
+- grass patch rendering
+- imported tree model placement
+- clean island indicators
+- Lost Island altar rendering
+- sword model/fallback rendering
+
+The boat remains in `main.cpp` because it depends directly on player movement, water bobbing, cargo display, and gameplay state.
+
+Relevant files:
+
+```text
+WorldRenderer.h
+WorldRenderer.cpp
+RenderTypes.h
+WorldGen.h
+WorldGen.cpp
+```
+
+---
+
+## Main code structure
+
+The project is now split into clearer systems.
+
+| File | Purpose |
+|---|---|
+| `main.cpp` | Window setup, input, main loop, gameplay state, render pass orchestration |
+| `WorldGen.h/.cpp` | Procedural island mesh generation |
+| `WorldRenderer.h/.cpp` | Static world drawing: dock, islands, trees, markers, Lost Island |
+| `RenderTypes.h` | Shared render/model types such as `ModelMesh` and `MaterialType` |
+| `FishingMinigame.h/.cpp` | Optional timing-based fishing minigame |
+| `IslandQuest.h/.cpp` | Key collection, Lost Island unlock, final win state |
+| `SoundManager.h/.cpp` | Music, SFX, ambient layers, volume control |
+| `UIOverlay.h/.cpp` | HUD, start/pause/victory screens, journal, catch feedback |
+| `GameSettingsMenu.h/.cpp` | Settings menu and brightness/audio options |
+| `PostProcess.h/.cpp` | Fullscreen post-processing pipeline |
+| `LostIslandSetpiece.h/.cpp` | Final altar and sword transforms |
+| `SimpleOBJLoader.h` | OBJ model loading |
+
+This structure makes `main.cpp` more of a coordinator rather than a single file containing every system.
+
+---
+
+## Important shader files
+
+| Shader | Purpose |
+|---|---|
+| `basic.vert` / `basic.frag` | Main lit material shader with fog, shadows, PCF/PCSS, material response |
+| `water.vert` / `water.frag` | Animated water with lighting, fog, tint, shadowing, and danger mood |
+| `depth.vert` / `depth.frag` | Shadow map depth pass |
+| `postprocess.vert` / `postprocess.frag` | Edge detection, blur, night vision, god rays, brightness/presentation pass |
+| `particle.vert` / `particle.frag` | Point sprite particles |
+| `skybox.vert` / `skybox.frag` | Skybox rendering |
+
+---
+
+## Feature mapping against the coursework rubric
+
+### Passing requirements
+
+The project is intended to satisfy the basic pass requirements:
+
+- Software compiles using the module framework.
+- Public Git repository exists.
+- Video/report explanation submitted.
+- Scene contains custom models and original scene composition.
+- Shader features from the lecture topics are implemented.
+
+### 40–60 range: advanced shader topics
+
+The project demonstrates multiple advanced shader/rendering topics:
+
+- shadow mapping
+- PCF/PCSS shadow filtering
+- post-processing
+- edge detection
+- blur
+- night vision
+- god rays
+- animated water
+- particles
+- skybox
+- dynamic lighting/sun cycle
+
+### 60–90 range: aesthetics and gamification
+
+The project includes a playable game loop and game design systems:
+
+- fishing zones
+- fish pools
+- cargo
+- selling
+- upgrades
+- hull damage
+- danger levels
+- repair
+- hidden keys
+- final objective
+- victory state
+- journal
+- HUD feedback
+- settings menu
+- audio feedback
+- atmospheric zone design
+
+### 90–100 range: research-style advanced features
+
+The strongest research-style / advanced features are:
+
+1. **PCSS-style soft shadow filtering**
+   - Based on the idea of contact-hardening soft shadows.
+   - Implemented as a live comparison against PCF.
+   - Integrated into both the scene shader and water shader.
+
+2. **Screen-space god rays / light shafts**
+   - Implemented as a fullscreen post-process.
+   - Uses the sun’s screen position and radial sampling.
+   - Tied to the dynamic sun cycle.
+
+3. **Procedural island mesh generation**
+   - Uses generated geometry rather than only static cube props.
+   - Produces irregular island silhouettes and surface-following grass.
+
+---
+
+## How the project addresses previous weaknesses
+
+The earlier version of the project had a simpler shrine/objective structure. This version expands the coursework into a fuller playable prototype by adding:
+
+- deeper game loop
+- fishing economy
+- upgrades
+- hull danger
+- repair
+- key collection
+- Lost Island progression
+- fish journal
+- custom HUD and menus
+- audio layers
+- settings menu
+- procedural islands
+- improved dock and environment set dressing
+- stronger shader integration
+- cleaner code organisation
+
+The goal was to make the project feel complete rather than just a small graphics demo.
+
+---
+
+## Audio design
+
+Audio is handled through `SoundManager`.
+
+The audio system includes:
+
+- background ambience
+- boat motor sound
+- splash/catch feedback
+- reel feedback
+- zone ambience layers
+- Lost Island ambience
+- master volume
+- music volume
+- SFX volume
+
+The audio is designed to support the mood of each zone and provide feedback for gameplay actions.
+
+---
+
+## UI design
+
+The custom UI is handled through `UIOverlay` and `GameSettingsMenu`.
+
+The UI includes:
+
+- start overlay
+- pause/help screen
+- HUD
+- cargo and gold display
+- hull display
+- quest text
+- catch card/banner
+- fish journal
+- settings menu
+- victory screen
+
+The UI is built around a `HUDState` structure so the renderer receives the game state it needs without directly controlling the gameplay systems.
+
+---
+
+## Settings menu
+
+The settings menu provides:
+
 - brightness adjustment
-- volume controls
-- key collection and Lost Island unlock
-- reaching the Lost Island
-- **F9** PCF vs PCSS
-- **F10** sun cycle
-- **F11** god rays
-- **F5–F8** post-process modes
-- **C** camera toggle and free-look
+- master volume
+- music volume
+- SFX volume
+- reset to defaults
+
+This helps the project feel more like a complete game prototype and improves usability.
 
 ---
 
-## Public GitHub repository
+## Models and assets
 
-Public GitHub repository:  
-**https://github.com/DavidWilson2000/COMP3015CW2**
+Important model assets include:
+
+```text
+media/models/boat.obj
+media/models/tree.obj
+media/models/tree.mtl
+media/models/treecolorpallet.png
+media/sword.obj
+media/models/sword.obj
+```
+
+Important texture/resource folders include:
+
+```text
+media/fish/
+media/sounds/
+textures/
+shader/
+```
+
+If a texture fails to load, some materials use procedural fallback textures so the project remains more robust during testing.
 
 ---
 
-## Generative AI use declaration
+## Software engineering decisions
 
-This assessment is marked as Partnered Work for GenAI use.  
-Generative AI was used as support for:
-- code assistance
-- debugging support
-- programming testing support
-- README/report drafting support
+### Modular systems
 
-All final integration, selection, testing, and submission decisions were made by me.
+The project is split into separate systems for rendering, procedural generation, UI, settings, audio, post-processing, fishing, quest logic, and setpiece placement.
+
+This improves:
+
+- readability
+- debugging
+- maintainability
+- report explanation
+- marking clarity
+
+### Refactored world generation
+
+Procedural island generation was moved into `WorldGen.h/.cpp` to keep mesh creation separate from the main loop.
+
+### Refactored world rendering
+
+Static world rendering was moved into `WorldRenderer.h/.cpp` to keep dock/island/tree/marker drawing out of `main.cpp`.
+
+### Shared render types
+
+`RenderTypes.h` contains shared rendering structures and enums used across `main.cpp` and `WorldRenderer.cpp`.
+
+### Relative paths
+
+The project uses relative paths for coursework simplicity, so the submitted repo must keep assets in the expected folders.
+
+### Fallbacks
+
+Where possible, fallback textures and fallback geometry are used to keep the scene running if an asset fails to load.
+
+---
+
+## Performance and design trade-offs
+
+This project balances visual quality with coursework scope.
+
+Examples:
+
+- Shadow mapping improves depth but requires a depth pass.
+- PCSS-style filtering looks better than hard shadows but is more expensive than simple PCF.
+- Post-processing adds style but requires a fullscreen pass.
+- Animated water and particles improve atmosphere but add update/render cost.
+- Custom UI gives full control but takes more implementation time.
+- The project uses some global state for practical coursework integration, while key systems have been separated into dedicated files.
 
 ---
 
 ## Repository contents
 
-Important files and folders include:
-- `main.cpp`
-- `FishingMinigame.h / .cpp`
-- `IslandQuest.h / .cpp`
-- `SoundManager.h / .cpp`
-- `GameSettingsMenu.h / .cpp`
-- `UIOverlay.h / .cpp`
-- `PostProcess.h / .cpp`
-- `LostIslandSetpiece.h / .cpp`
-- `shader/`
-- `media/models/`
-- `media/sounds/`
-- `media/fish/`
-- `textures/`
+Important files include:
+
+```text
+main.cpp
+RenderTypes.h
+WorldGen.h
+WorldGen.cpp
+WorldRenderer.h
+WorldRenderer.cpp
+FishingMinigame.h
+FishingMinigame.cpp
+IslandQuest.h
+IslandQuest.cpp
+SoundManager.h
+SoundManager.cpp
+GameSettingsMenu.h
+GameSettingsMenu.cpp
+UIOverlay.h
+UIOverlay.cpp
+PostProcess.h
+PostProcess.cpp
+LostIslandSetpiece.h
+LostIslandSetpiece.cpp
+SimpleOBJLoader.h
+```
+
+Important folders include:
+
+```text
+shader/
+media/models/
+media/sounds/
+media/fish/
+textures/
+```
 
 ---
 
 ## Notes for marker
 
 - The project uses multiple shader programs and render passes rather than a single global shader.
-- The project combines graphics features with gameplay systems.
-- The UI, menu, and settings systems are custom rendered.
-- Audio is handled through irrKlang with layered biome ambience.
-- The final objective is to collect three keys, unlock the Lost Island, and reach it.
-- The most important advanced rendering additions are PCSS soft shadows, the sun cycle, and god rays.
+- The project combines shader features with a playable fishing game loop.
+- The scene includes procedural islands, improved dock set dressing, imported tree models, and island identifiers.
+- The UI, journal, settings menu, and victory screens are custom rendered.
+- Audio is handled through irrKlang with layered ambience and volume controls.
+- The final objective is to collect three keys, unlock the Lost Island, and reach the final shrine.
+- The most important advanced rendering features are PCSS-style soft shadows, shadow mapping, dynamic sun cycle, god rays, post-processing, animated water, and particles.
+- `G` is a development/debug key and should be treated as a testing helper if left enabled.
+
+---
+
+## Generative AI use declaration
+
+This assessment is marked as Partnered Work for GenAI use.
+
+Generative AI was used for:
+
+- code assistance
+- debugging support
+- shader/pipeline planning support
+- README/report drafting support
+- refactoring support
+- wording and structure suggestions
+
+All final integration, testing, editing, feature selection, and submission decisions were made by me.
+
+An AI prompts/transcript file or appendix should be included with the final submission if required by the coursework instructions.
+
+---
+
+## Evaluation
+
+The final project is a complete interactive prototype rather than only a collection of disconnected graphics features.
+
+The strongest elements are:
+
+- the integration of shader features into gameplay
+- the fishing/economy/progression loop
+- the custom UI and journal
+- zone-based atmosphere
+- dynamic lighting and shadows
+- procedural island generation
+- audio layering
+- settings menu
+- Lost Island objective and victory state
+- improved modular code structure
+
+If I had more time, I would improve:
+
+1. save/load persistence
+2. more fish behaviour differences by biome
+3. more bespoke audio events
+4. more polished boat/dock collision
+5. cleaner removal of remaining global state
+6. deeper research write-up with direct source references for PCSS and god rays
