@@ -8,72 +8,56 @@ The project was designed as a playable game scene rather than a static shader sh
 
 The main aim of the coursework was to combine advanced shader features with an original interactive scene. The final project integrates rendering, procedural world generation, post-processing, shadows, particles, UI, audio, settings, and gameplay progression into one complete prototype.
 
----
-
-## Public repository
 
 GitHub repository:  
 **https://github.com/DavidWilson2000/COMP3015CW2**
 
----
 
 ## Video report
 
 Video walkthrough and explanation:  
 **[PASTE YOUR UNLISTED YOUTUBE LINK HERE BEFORE SUBMISSION]**
 
-The video should demonstrate:
-
-- Running the executable from the submitted build/project.
-- Core boat movement and camera controls.
-- Sailing between different fishing zones.
-- Fishing with and without the optional minigame.
-- Cargo collection, selling, upgrades, and hull repair.
-- Fish journal pages and catch feedback.
-- Settings menu brightness and audio controls.
-- Dangerous water and hull damage.
-- Three-key quest progression.
-- Lost Island unlock and final victory state.
-- Procedural islands, imported tree models, island identifiers, and improved dock setpiece.
-- Shadow mapping and **F9** PCF/PCSS toggle.
-- Dynamic sun cycle with **F10**.
-- God rays with **F11**.
-- Image processing modes with **F5–F8**.
-- Pause/help screen, start screen, and victory screen.
-
 ---
 
-## How to run
+## How to run the game
 
-1. Open the Visual Studio solution/project.
-2. Make sure the following `.cpp` files are included in the Visual Studio project:
-   - `main.cpp`
-   - `WorldGen.cpp`
-   - `WorldRenderer.cpp`
-   - `SoundManager.cpp`
-   - `UIOverlay.cpp`
-   - `GameSettingsMenu.cpp`
-   - `PostProcess.cpp`
-   - `FishingMinigame.cpp`
-   - `IslandQuest.cpp`
-   - `LostIslandSetpiece.cpp`
-3. Build the project in the correct configuration for your machine.
-4. Run the executable from Visual Studio, or run the built `.exe` from the output folder.
-5. Keep the required resource folders in their expected relative locations.
+The submitted game should be run from the packaged **x64/Debug** folder, like a normal standalone game build.
 
-Required folders include:
+1. Open the submitted build folder:
+x64/Debug/
 
-```text
+Double-click the executable:
+Project_Template.exe
+
+Keep the resource folders and required .dll files beside the executable. Do not move the .exe out of this folder.
+
+The Debug folder should contain:
+
+Project_Template.exe
+glew32.dll
+glfw3.dll
+irrKlang.dll
+media/
 shader/
-media/models/
-media/sounds/
-media/fish/
-textures/
-```
 
-The project uses relative paths, so models, textures, sounds, fish images, and shader files must remain in the correct folders.
+The project uses relative paths, so the executable expects the media/ and shader/ folders to be in the same folder as Project_Template.exe.
 
----
+The media/ folder contains the required models, sounds, fish images, and other game assets. The shader/ folder contains the GLSL shader files used by the rendering pipeline.
+
+Developer build notes:
+For development or marking from source, the Visual Studio project should include these source files:
+
+main.cpp
+WorldGen.cpp
+WorldRenderer.cpp
+SoundManager.cpp
+UIOverlay.cpp
+GameSettingsMenu.cpp
+PostProcess.cpp
+FishingMinigame.cpp
+IslandQuest.cpp
+LostIslandSetpiece.cpp
 
 ## Controls
 
@@ -131,7 +115,7 @@ The project uses relative paths, so models, textures, sounds, fish images, and s
 |---|---|
 | **G** | Debug/test gold and progression helper used during development |
 
-For final marking, this should either be clearly explained as a debug helper or removed/disabled if not wanted in the submitted build.
+For final game, this should either be removed or disabled.
 
 ---
 
@@ -159,7 +143,7 @@ This makes the scene function as a game rather than only a graphics demonstratio
 
 ### Core game features
 
-- Controllable boat movement.
+- Controllable custom made boat.
 - Follow camera and free-look camera mode.
 - Multiple fishing zones.
 - Zone-specific fish pools.
@@ -545,10 +529,25 @@ The project includes a playable game loop and game design systems:
 
 The strongest research-style / advanced features are:
 
-1. **PCSS-style soft shadow filtering**
-   - Based on the idea of contact-hardening soft shadows.
-   - Implemented as a live comparison against PCF.
-   - Integrated into both the scene shader and water shader.
+### 1. PCSS soft shadows
+
+For the shadow filtering feature, I used Randima Fernando’s *Percentage-Closer Soft Shadows* as the main research source. Fernando presents PCSS as an extension of shadow mapping and percentage-closer filtering, where the shader searches for blockers, estimates penumbra size, and then varies the PCF filter size to create softer shadows.
+
+I adapted this idea into my own GLSL shadow system. The project first renders a depth map from the light’s point of view, then the main material shader and water shader sample that shadow map. The implementation supports a live **F9** toggle between standard PCF and a PCSS-style mode so the difference can be shown clearly in the video.
+
+In my implementation, the PCSS mode:
+- searches nearby shadow-map samples for blockers
+- averages blocker depth
+- estimates a penumbra amount from the blocker/receiver depth difference
+- increases the PCF filter radius based on that penumbra
+- uses Poisson disk sampling to soften the result
+
+Relevant files:
+- `basic.frag`
+- `water.frag`
+- `depth.vert`
+- `depth.frag`
+- `main.cpp`
 
 2. **Screen-space god rays / light shafts**
    - Implemented as a fullscreen post-process.
@@ -770,24 +769,7 @@ textures/
 
 ---
 
-## Generative AI use declaration
 
-This assessment is marked as Partnered Work for GenAI use.
-
-Generative AI was used for:
-
-- code assistance
-- debugging support
-- shader/pipeline planning support
-- README/report drafting support
-- refactoring support
-- wording and structure suggestions
-
-All final integration, testing, editing, feature selection, and submission decisions were made by me.
-
-An AI prompts/transcript file or appendix should be included with the final submission if required by the coursework instructions.
-
----
 
 ## Evaluation
 
@@ -810,7 +792,43 @@ If I had more time, I would improve:
 
 1. save/load persistence
 2. more fish behaviour differences by biome
-3. more bespoke audio events
-4. more polished boat/dock collision
+3. more audio events tied to in game actions
+4. polished boat/dock collision
 5. cleaner removal of remaining global state
 6. deeper research write-up with direct source references for PCSS and god rays
+
+## Generative AI use declaration
+
+This assessment is marked as Partnered Work for GenAI use.
+
+Generative AI was used for:
+
+- code assistance - Chat GPT was used to help create or mainly merge aspects from other projects into this one, a good example would be when creating the HUD it gave me the code needed to create letters on the screen.
+  <img width="792" height="543" alt="image" src="https://github.com/user-attachments/assets/6eafa90c-5d16-4648-aafa-e293db66af85" />
+
+- debugging support - GPT was used to point me in the right direction when errors happened in the code and i was unable to figure it out myself
+  <img width="823" height="562" alt="image" src="https://github.com/user-attachments/assets/b51f9503-9582-48e8-8590-7abcf5235baa" />
+
+- shader/pipeline planning support GPT was used to help me create the advance shaders God Rays as i was worried about how long i had left and that the PCSS feature would not hold up on its own.
+  <img width="830" height="592" alt="image" src="https://github.com/user-attachments/assets/8d653492-1b26-4bcc-9621-5e4607e75877" />
+
+- README/report drafting support - GPT was used to give me a good general outline to fill out for my readme, mainly GPT was used for formatting such as turning my data into tables (the controls tables)
+  <img width="836" height="493" alt="image" src="https://github.com/user-attachments/assets/d1a14164-0674-4278-acf0-30d41fb1a767" />
+
+- refactoring support - GPT was used at the very end of the project to help me split some functions out of main due to the size of main and was useful as i would often forget some functions needed globals.
+  <img width="877" height="488" alt="image" src="https://github.com/user-attachments/assets/fc90499e-fb2a-457a-b843-c713e74b2201" />
+
+
+
+All final integration, testing, editing, feature selection, and submission decisions were made by me.
+
+An AI prompts/transcript file or appendix should be included with the final submission if required by the coursework instructions.
+
+---
+
+
+## References
+
+Fernando, R. (2005) *Percentage-Closer Soft Shadows*. ACM SIGGRAPH 2005 Sketches. Available at: https://doi.org/10.1145/1187112.1187153
+
+NVIDIA (2005) *Percentage-Closer Soft Shadows*. Available at: https://developer.download.nvidia.com/SDK/9.5/Samples/MEDIA/docPix/docs/PCSS.pdf
