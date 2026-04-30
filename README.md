@@ -16,7 +16,7 @@ GitHub repository:
 ## Video report
 
 Video walkthrough and explanation:  
-**[PASTE YOUR UNLISTED YOUTUBE LINK HERE BEFORE SUBMISSION]**
+**https://youtu.be/15sWXQSl3cQ**
 
 ---
 
@@ -119,7 +119,19 @@ For final game, this should either be removed or disabled.
 
 ---
 
-## Main gameplay loop
+### Fallback path resolution and debug logging
+
+The project includes fallback path checks for important resources such as shaders, textures, models, fish images, and audio folders.
+
+When loading resources, the program can try multiple relative path options, such as:
+
+text
+media/sounds
+../media/sounds
+../../media/sounds
+../../../media/sounds
+
+ Main gameplay loop
 
 The project has a complete game loop:
 
