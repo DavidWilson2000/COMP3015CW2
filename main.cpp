@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -83,6 +84,18 @@ struct ModelMesh
     GLuint vbo = 0;
     size_t vertexCount = 0;
     bool loaded = false;
+
+    // Bounds are used to auto-scale/ground imported models such as trees.
+    glm::vec3 minBounds = glm::vec3(0.0f);
+    glm::vec3 maxBounds = glm::vec3(0.0f);
+};
+
+struct GeneratedMesh
+{
+    GLuint vao = 0;
+    GLuint vbo = 0;
+    size_t vertexCount = 0;
+    bool ready = false;
 };
 
 struct FishData
@@ -344,9 +357,15 @@ GLuint rockTex = 0;
 GLuint grassTex = 0;
 GLuint boatTex = 0;
 GLuint buoyTex = 0;
+GLuint treeTex = 0;
+GLuint zoneMarkerTex[3] = { 0, 0, 0 };
+
+std::vector<GeneratedMesh> gIslandRockMeshes;
+std::vector<GeneratedMesh> gIslandGrassMeshes;
 
 ModelMesh boatModel;
 ModelMesh swordModel;
+ModelMesh treeModel;
 
 float boatVisualY = 0.18f;
 float boatVisualPitch = 0.0f;
@@ -509,6 +528,235 @@ void key_callback(GLFWwindow* window, int key, int, int action, int)
     }
 }
 
+
+float islandBoundaryNoise(float angle, float seed)
+{
+    return 1.0f
+        + 0.12f * std::sin(angle * 3.0f + seed * 1.7f)
+        + 0.08f * std::cos(angle * 5.0f + seed * 0.6f)
+        + 0.05f * std::sin(angle * 9.0f + seed * 2.3f);
+}
+
+float islandSurfaceHeight(float x, float z, float radius, float maxHeight, float seed)
+{
+    const float angle = std::atan2(z, x);
+    const float boundary = std::max(0.68f, islandBoundaryNoise(angle, seed));
+    const float r = std::sqrt(x * x + z * z) / std::max(radius * boundary, 0.001f);
+
+    if (r > 1.0f)
+    {
+        // Pull the outer rim slightly below the waterline so the island blends into the sea.
+        return -0.28f - (r - 1.0f) * 0.42f;
+    }
+
+    float falloff = std::max(0.0f, 1.0f - r);
+    float rockyNoise =
+        0.13f * std::sin(x * 2.35f + seed * 1.9f) +
+        0.10f * std::cos(z * 2.10f + seed * 1.1f) +
+        0.06f * std::sin((x + z) * 3.45f + seed * 2.8f);
+
+    // A broad mound with irregular low-poly bumps.
+    float h = std::pow(falloff, 1.45f) * maxHeight + rockyNoise * falloff;
+
+    // Softly flatten the upper area so it reads like a small playable island, not a spike.
+    const float plateau = maxHeight * 0.72f;
+    if (h > plateau)
+    {
+        h = glm::mix(h, plateau, 0.38f);
+    }
+
+    return std::max(h, -0.32f);
+}
+
+void pushGeneratedVertex(std::vector<float>& vertices, const glm::vec3& pos, const glm::vec3& normal, const glm::vec2& uv)
+{
+    vertices.push_back(pos.x);
+    vertices.push_back(pos.y);
+    vertices.push_back(pos.z);
+
+    vertices.push_back(normal.x);
+    vertices.push_back(normal.y);
+    vertices.push_back(normal.z);
+
+    vertices.push_back(uv.x);
+    vertices.push_back(uv.y);
+}
+
+void pushGeneratedTriangle(std::vector<float>& vertices,
+                           const glm::vec3& a, const glm::vec3& b, const glm::vec3& c,
+                           const glm::vec2& uva, const glm::vec2& uvb, const glm::vec2& uvc)
+{
+    glm::vec3 normal = glm::cross(b - a, c - a);
+    if (glm::length(normal) < 0.0001f)
+    {
+        normal = glm::vec3(0.0f, 1.0f, 0.0f);
+    }
+    else
+    {
+        normal = glm::normalize(normal);
+    }
+
+    pushGeneratedVertex(vertices, a, normal, uva);
+    pushGeneratedVertex(vertices, b, normal, uvb);
+    pushGeneratedVertex(vertices, c, normal, uvc);
+}
+
+GeneratedMesh uploadGeneratedMesh(const std::vector<float>& vertices)
+{
+    GeneratedMesh mesh;
+    if (vertices.empty())
+    {
+        return mesh;
+    }
+
+    glGenVertexArrays(1, &mesh.vao);
+    glGenBuffers(1, &mesh.vbo);
+
+    glBindVertexArray(mesh.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.vbo);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+
+    glBindVertexArray(0);
+
+    mesh.vertexCount = vertices.size() / 8;
+    mesh.ready = true;
+    return mesh;
+}
+
+GeneratedMesh createProceduralIslandRockMesh(int resolution, float radius, float maxHeight, float seed)
+{
+    std::vector<float> vertices;
+    vertices.reserve(static_cast<size_t>(resolution * resolution * 6 * 8));
+
+    auto makePoint = [&](int ix, int iz) -> glm::vec3
+    {
+        float u = ix / static_cast<float>(resolution);
+        float v = iz / static_cast<float>(resolution);
+
+        float x = (u * 2.0f - 1.0f) * radius;
+        float z = (v * 2.0f - 1.0f) * radius;
+        float y = islandSurfaceHeight(x, z, radius, maxHeight, seed);
+
+        return glm::vec3(x, y, z);
+    };
+
+    auto edgeAmount = [&](const glm::vec3& p) -> float
+    {
+        const float angle = std::atan2(p.z, p.x);
+        const float boundary = std::max(0.68f, islandBoundaryNoise(angle, seed));
+        return std::sqrt(p.x * p.x + p.z * p.z) / std::max(radius * boundary, 0.001f);
+    };
+
+    for (int z = 0; z < resolution; ++z)
+    {
+        for (int x = 0; x < resolution; ++x)
+        {
+            glm::vec3 p00 = makePoint(x, z);
+            glm::vec3 p10 = makePoint(x + 1, z);
+            glm::vec3 p01 = makePoint(x, z + 1);
+            glm::vec3 p11 = makePoint(x + 1, z + 1);
+
+            // Skip fully outside cells so the mesh has a round, uneven silhouette instead of a square one.
+            if (edgeAmount(p00) > 1.12f && edgeAmount(p10) > 1.12f &&
+                edgeAmount(p01) > 1.12f && edgeAmount(p11) > 1.12f)
+            {
+                continue;
+            }
+
+            glm::vec2 uv00(x / static_cast<float>(resolution), z / static_cast<float>(resolution));
+            glm::vec2 uv10((x + 1) / static_cast<float>(resolution), z / static_cast<float>(resolution));
+            glm::vec2 uv01(x / static_cast<float>(resolution), (z + 1) / static_cast<float>(resolution));
+            glm::vec2 uv11((x + 1) / static_cast<float>(resolution), (z + 1) / static_cast<float>(resolution));
+
+            pushGeneratedTriangle(vertices, p00, p11, p10, uv00, uv11, uv10);
+            pushGeneratedTriangle(vertices, p00, p01, p11, uv00, uv01, uv11);
+        }
+    }
+
+    return uploadGeneratedMesh(vertices);
+}
+
+GeneratedMesh createProceduralGrassPatchMesh(int rings, int segments, float islandRadius, float patchRadius, float maxHeight, float seed)
+{
+    std::vector<float> vertices;
+    vertices.reserve(static_cast<size_t>(rings * segments * 6 * 8));
+
+    auto makePoint = [&](int ring, int segment) -> glm::vec3
+    {
+        float ringT = ring / static_cast<float>(rings);
+        float angle = (segment / static_cast<float>(segments)) * 6.2831853f;
+
+        // A smaller, uneven grass patch that follows the rock height instead of
+        // cutting through the island as a flat green disk.
+        float outline = 1.0f
+            + 0.10f * std::sin(angle * 3.0f + seed * 0.7f)
+            + 0.06f * std::cos(angle * 6.0f + seed * 1.3f)
+            + 0.035f * std::sin(angle * 11.0f + seed * 2.1f);
+
+        float r = patchRadius * ringT * outline;
+        float x = std::cos(angle) * r;
+        float z = std::sin(angle) * r;
+
+        float surfaceY = islandSurfaceHeight(x, z, islandRadius, maxHeight, seed);
+        float softEdge = ringT * ringT;
+        float bump = 0.025f * (1.0f - softEdge) * std::sin(angle * 5.0f + seed * 1.8f);
+
+        // Slightly raise the grass above the rock to avoid z-fighting, while
+        // dipping the edge so it blends into the stone.
+        return glm::vec3(x, surfaceY + 0.045f + bump - softEdge * 0.018f, z);
+    };
+
+    auto makeUV = [&](const glm::vec3& p) -> glm::vec2
+    {
+        return glm::vec2((p.x / patchRadius) * 0.5f + 0.5f, (p.z / patchRadius) * 0.5f + 0.5f);
+    };
+
+    for (int ring = 0; ring < rings; ++ring)
+    {
+        for (int segment = 0; segment < segments; ++segment)
+        {
+            int nextSegment = (segment + 1) % segments;
+
+            glm::vec3 p00 = makePoint(ring, segment);
+            glm::vec3 p10 = makePoint(ring + 1, segment);
+            glm::vec3 p01 = makePoint(ring, nextSegment);
+            glm::vec3 p11 = makePoint(ring + 1, nextSegment);
+
+            pushGeneratedTriangle(vertices, p00, p11, p10, makeUV(p00), makeUV(p11), makeUV(p10));
+            pushGeneratedTriangle(vertices, p00, p01, p11, makeUV(p00), makeUV(p01), makeUV(p11));
+        }
+    }
+
+    return uploadGeneratedMesh(vertices);
+}
+
+void setupGeneratedIslandMeshes()
+{
+    gIslandRockMeshes.clear();
+    gIslandGrassMeshes.clear();
+
+    // Each island uses a different seed/shape so the repeated locations do not look copied.
+    const float seeds[] = { 1.0f, 2.35f, 4.7f, 7.1f };
+    const float radii[] = { 3.3f, 2.9f, 3.8f, 2.7f };
+    const float heights[] = { 1.65f, 1.35f, 1.85f, 1.25f };
+
+    for (int i = 0; i < 4; ++i)
+    {
+        gIslandRockMeshes.push_back(createProceduralIslandRockMesh(34, radii[i], heights[i], seeds[i]));
+        gIslandGrassMeshes.push_back(createProceduralGrassPatchMesh(6, 42, radii[i], radii[i] * 0.43f, heights[i], seeds[i]));
+    }
+}
+
+
 void setupCube()
 {
     glGenVertexArrays(1, &cubeVAO);
@@ -611,6 +859,19 @@ bool loadOBJModel(const std::string& path, ModelMesh& outModel)
     if (!warning.empty())
         std::cout << "OBJ warning: " << warning << std::endl;
 
+    glm::vec3 minBounds(std::numeric_limits<float>::max());
+    glm::vec3 maxBounds(-std::numeric_limits<float>::max());
+
+    for (size_t i = 0; i + 7 < vertices.size(); i += 8)
+    {
+        glm::vec3 p(vertices[i + 0], vertices[i + 1], vertices[i + 2]);
+        minBounds = glm::min(minBounds, p);
+        maxBounds = glm::max(maxBounds, p);
+    }
+
+    outModel.minBounds = minBounds;
+    outModel.maxBounds = maxBounds;
+
     glGenVertexArrays(1, &outModel.vao);
     glGenBuffers(1, &outModel.vbo);
 
@@ -633,7 +894,10 @@ bool loadOBJModel(const std::string& path, ModelMesh& outModel)
     outModel.loaded = true;
 
     std::cout << "Loaded OBJ model: " << path
-              << " | vertices: " << outModel.vertexCount << std::endl;
+              << " | vertices: " << outModel.vertexCount
+              << " | bounds min(" << outModel.minBounds.x << ", " << outModel.minBounds.y << ", " << outModel.minBounds.z << ")"
+              << " max(" << outModel.maxBounds.x << ", " << outModel.maxBounds.y << ", " << outModel.maxBounds.z << ")"
+              << std::endl;
 
     return true;
 }
@@ -650,6 +914,22 @@ GLuint createTextureFromRGBData(const std::vector<unsigned char>& data, int widt
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     return tex;
+}
+
+GLuint createSolidColorTexture(unsigned char r, unsigned char g, unsigned char b)
+{
+    const int w = 4;
+    const int h = 4;
+    std::vector<unsigned char> data(w * h * 3);
+
+    for (int i = 0; i < w * h; ++i)
+    {
+        data[i * 3 + 0] = r;
+        data[i * 3 + 1] = g;
+        data[i * 3 + 2] = b;
+    }
+
+    return createTextureFromRGBData(data, w, h);
 }
 
 GLuint loadTextureFromFile(const std::string& path, bool flipVertically = true)
@@ -1880,6 +2160,19 @@ void drawCube(GLuint shader, const glm::mat4& model)
     glDrawArrays(GL_TRIANGLES, 0, 36);
 }
 
+void drawGeneratedMesh(GLuint shader, const GeneratedMesh& mesh, const glm::mat4& model)
+{
+    if (!mesh.ready || mesh.vao == 0 || mesh.vertexCount == 0)
+    {
+        return;
+    }
+
+    setMat4(shader, "model", model);
+    glBindVertexArray(mesh.vao);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(mesh.vertexCount));
+    glBindVertexArray(0);
+}
+
 void drawPlane(GLuint shader, const glm::mat4& model)
 {
     setMat4(shader, "model", model);
@@ -1905,105 +2198,338 @@ void renderWorldGeometry(GLuint shader, bool depthPass, float time)
         if (!depthPass) bindMaterial(shader, tex, type, tiling);
     };
 
-    // Dock base
+    // Clean improved dock setpiece
+    // Built from simple cubes, but kept readable: planks, beams, posts, one shed roof and a few props.
     {
-        setMat(woodTex, MAT_WOOD, 3.0f);
-        glm::mat4 model(1.0f);
-        model = glm::translate(model, glm::vec3(0.0f, 0.28f, 0.0f));
-        model = glm::scale(model, glm::vec3(5.0f, 0.22f, 3.0f));
-        drawCube(shader, model);
-
-        for (int x = -1; x <= 1; ++x)
+        auto drawBox = [&](GLuint tex, int material, float tiling,
+                           const glm::vec3& position,
+                           const glm::vec3& scale,
+                           float yawDegrees = 0.0f,
+                           float rollDegrees = 0.0f)
         {
-            for (int z = -1; z <= 1; z += 2)
-            {
-                glm::mat4 post(1.0f);
-                post = glm::translate(post, glm::vec3(static_cast<float>(x) * 1.5f, -0.72f, static_cast<float>(z) * 1.0f));
-                post = glm::scale(post, glm::vec3(0.22f, 2.0f, 0.22f));
-                drawCube(shader, post);
-            }
+            setMat(tex, material, tiling);
+            glm::mat4 box(1.0f);
+            box = glm::translate(box, position);
+            box = glm::rotate(box, glm::radians(yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f));
+            box = glm::rotate(box, glm::radians(rollDegrees), glm::vec3(0.0f, 0.0f, 1.0f));
+            box = glm::scale(box, scale);
+            drawCube(shader, box);
+        };
+
+        // Main timber platform, lowered slightly into the water so it feels heavier.
+        drawBox(woodTex, MAT_WOOD, 3.0f, glm::vec3(0.0f, 0.24f, 0.0f), glm::vec3(5.2f, 0.18f, 3.1f));
+
+        // Individual surface planks with tiny height/rotation variation.
+        for (int plank = 0; plank < 8; ++plank)
+        {
+            float z = -1.30f + plank * 0.37f;
+            float y = 0.39f + (plank % 2 == 0 ? 0.012f : 0.0f);
+            float yaw = (plank % 3 - 1) * 0.7f;
+            drawBox(woodTex, MAT_WOOD, 1.7f,
+                    glm::vec3(0.0f, y, z),
+                    glm::vec3(5.35f, 0.045f, 0.14f),
+                    yaw);
         }
+
+        // Thick outer frame beams.
+        drawBox(woodTex, MAT_WOOD, 1.5f, glm::vec3(0.0f, 0.47f, 1.63f),  glm::vec3(5.45f, 0.14f, 0.12f));
+        drawBox(woodTex, MAT_WOOD, 1.5f, glm::vec3(0.0f, 0.47f, -1.63f), glm::vec3(5.45f, 0.14f, 0.12f));
+        drawBox(woodTex, MAT_WOOD, 1.5f, glm::vec3(2.73f, 0.47f, 0.0f),  glm::vec3(0.12f, 0.14f, 3.25f));
+        drawBox(woodTex, MAT_WOOD, 1.5f, glm::vec3(-2.73f, 0.47f, 0.0f), glm::vec3(0.12f, 0.14f, 3.25f));
+
+        // Under-dock support posts reaching below the water.
+        const glm::vec3 postPositions[] = {
+            glm::vec3(-2.25f, -0.64f, -1.20f), glm::vec3(0.0f, -0.68f, -1.22f), glm::vec3(2.25f, -0.64f, -1.20f),
+            glm::vec3(-2.25f, -0.64f,  1.20f), glm::vec3(0.0f, -0.68f,  1.22f), glm::vec3(2.25f, -0.64f,  1.20f)
+        };
+
+        for (const glm::vec3& postPos : postPositions)
+        {
+            drawBox(woodTex, MAT_WOOD, 1.0f, postPos, glm::vec3(0.20f, 2.15f, 0.20f));
+        }
+
+        // A cleaner short rail along the back edge only.
+        const float railZ = -1.48f;
+        for (int rail = 0; rail < 3; ++rail)
+        {
+            float x = -2.05f + rail * 2.05f;
+            drawBox(woodTex, MAT_WOOD, 1.0f, glm::vec3(x, 0.98f, railZ), glm::vec3(0.12f, 0.95f, 0.12f));
+        }
+
+        // Simple horizontal rail. Kept low so it does not clutter the silhouette.
+        drawBox(woodTex, MAT_WOOD, 1.0f, glm::vec3(0.0f, 1.15f, railZ), glm::vec3(4.25f, 0.045f, 0.055f));
+
+        // Small side jetty where the boat can visually line up with the dock.
+        drawBox(woodTex, MAT_WOOD, 2.0f, glm::vec3(-3.05f, 0.23f, 0.72f), glm::vec3(1.30f, 0.13f, 0.72f), -8.0f);
+
+        // A simple ladder on the front edge for dock detail.
+        drawBox(woodTex, MAT_WOOD, 1.0f, glm::vec3(2.25f, 0.08f, 1.78f), glm::vec3(0.055f, 0.82f, 0.055f));
+        drawBox(woodTex, MAT_WOOD, 1.0f, glm::vec3(2.55f, 0.08f, 1.78f), glm::vec3(0.055f, 0.82f, 0.055f));
+        drawBox(woodTex, MAT_WOOD, 1.0f, glm::vec3(2.40f, 0.18f, 1.82f), glm::vec3(0.34f, 0.045f, 0.045f));
+        drawBox(woodTex, MAT_WOOD, 1.0f, glm::vec3(2.40f, -0.08f, 1.82f), glm::vec3(0.34f, 0.045f, 0.045f));
+
+        // Clean dock shed with one roof only.
+        drawBox(woodTex, MAT_WOOD, 2.0f, glm::vec3(-1.22f, 0.93f, 0.04f), glm::vec3(1.38f, 1.02f, 1.08f));
+        drawBox(woodTex, MAT_WOOD, 1.3f, glm::vec3(-1.22f, 0.48f, 0.04f), glm::vec3(1.52f, 0.12f, 1.20f));
+
+        // One broad roof panel with a small overhang. This removes the crossed/double-roof look.
+        drawBox(woodTex, MAT_WOOD, 1.55f, glm::vec3(-1.22f, 1.58f, 0.04f), glm::vec3(1.95f, 0.16f, 1.48f));
+
+        // Small trim under the roof to make the shed read clearly without adding a second roof.
+        drawBox(woodTex, MAT_WOOD, 1.1f, glm::vec3(-1.22f, 1.43f, -0.70f), glm::vec3(1.70f, 0.10f, 0.08f));
+        drawBox(woodTex, MAT_WOOD, 1.1f, glm::vec3(-1.22f, 1.43f, 0.78f), glm::vec3(1.70f, 0.10f, 0.08f));
+
+        // Small dark doorway so the shed does not look like a plain cube.
+        drawBox(rockTex, MAT_ROCK, 1.0f, glm::vec3(-0.50f, 0.77f, -0.55f), glm::vec3(0.34f, 0.52f, 0.035f));
+
+        // Cargo props grouped naturally. Lantern removed for a cleaner dock.
+        drawBox(woodTex, MAT_WOOD, 1.3f, glm::vec3(1.46f, 0.58f, -0.40f), glm::vec3(0.26f, 0.26f, 0.26f), 8.0f);
+        drawBox(woodTex, MAT_WOOD, 1.3f, glm::vec3(1.77f, 0.55f, -0.24f), glm::vec3(0.22f, 0.22f, 0.22f), -13.0f);
+        drawBox(woodTex, MAT_WOOD, 1.3f, glm::vec3(1.63f, 0.83f, -0.30f), glm::vec3(0.18f, 0.18f, 0.18f), 21.0f);
+
+        // Barrel-like stacked blocks beside the shed.
+        drawBox(woodTex, MAT_WOOD, 1.0f, glm::vec3(-2.18f, 0.61f, 0.88f), glm::vec3(0.22f, 0.34f, 0.22f), 18.0f);
+        drawBox(woodTex, MAT_WOOD, 1.0f, glm::vec3(-2.46f, 0.58f, 0.72f), glm::vec3(0.19f, 0.30f, 0.19f), -11.0f);
     }
 
-    // Dock shed
-    {
-        setMat(woodTex, MAT_WOOD, 2.0f);
-        glm::mat4 base(1.0f);
-        base = glm::translate(base, glm::vec3(-1.2f, 0.91f, 0.0f));
-        base = glm::scale(base, glm::vec3(1.4f, 1.0f, 1.2f));
-        drawCube(shader, base);
-
-        glm::mat4 roof(1.0f);
-        roof = glm::translate(roof, glm::vec3(-1.2f, 1.71f, 0.0f));
-        roof = glm::rotate(roof, glm::radians(25.0f), glm::vec3(0, 0, 1));
-        roof = glm::scale(roof, glm::vec3(1.9f, 0.16f, 1.5f));
-        drawCube(shader, roof);
-    }
-
-    // Crates at dock
-    {
-        setMat(woodTex, MAT_WOOD, 1.5f);
-
-        glm::mat4 crate1(1.0f);
-        crate1 = glm::translate(crate1, glm::vec3(1.55f, 0.49f, -0.55f));
-        crate1 = glm::scale(crate1, glm::vec3(0.24f, 0.24f, 0.24f));
-        drawCube(shader, crate1);
-
-        glm::mat4 crate2(1.0f);
-        crate2 = glm::translate(crate2, glm::vec3(1.88f, 0.49f, -0.34f));
-        crate2 = glm::scale(crate2, glm::vec3(0.20f, 0.20f, 0.20f));
-        drawCube(shader, crate2);
-
-        glm::mat4 crate3(1.0f);
-        crate3 = glm::translate(crate3, glm::vec3(2.10f, 0.49f, -0.58f));
-        crate3 = glm::scale(crate3, glm::vec3(0.18f, 0.18f, 0.18f));
-        drawCube(shader, crate3);
-    }
-
-    // Islands layered
+    // Procedural mini islands
+    // These replace the old stacked-cube islands with generated low-poly rock mounds.
+    // The grass is now a smaller surface-following patch instead of a flat disk, and
+    // tree bases are placed using the same height function as the island mesh.
     std::vector<glm::vec3> islandPositions = {
-        glm::vec3(12.0f, 0.35f, 10.0f),
-        glm::vec3(-18.0f, 0.35f, -10.0f),
-        glm::vec3(23.0f, 0.35f, -23.0f),
-        glm::vec3(-10.0f, 0.35f, 18.0f)
+        glm::vec3(12.0f, 0.12f, 10.0f),
+        glm::vec3(-18.0f, 0.12f, -10.0f),
+        glm::vec3(23.0f, 0.12f, -23.0f),
+        glm::vec3(-10.0f, 0.12f, 18.0f)
     };
+
+    const float islandSeeds[] = { 1.0f, 2.35f, 4.7f, 7.1f };
+    const float islandRadii[] = { 3.3f, 2.9f, 3.8f, 2.7f };
+    const float islandHeights[] = { 1.65f, 1.35f, 1.85f, 1.25f };
 
     for (size_t i = 0; i < islandPositions.size(); ++i)
     {
         glm::vec3 pos = islandPositions[i];
-        setMat(rockTex, MAT_ROCK, 2.7f);
-        for (int layer = 0; layer < 3; ++layer)
+        float rotation = glm::radians(35.0f * static_cast<float>(i));
+        float islandScale = 1.0f + 0.08f * std::sin(static_cast<float>(i) * 1.73f);
+        float seed = islandSeeds[i % 4];
+        float islandRadius = islandRadii[i % 4];
+        float islandHeight = islandHeights[i % 4];
+
+        glm::mat4 islandModel(1.0f);
+        islandModel = glm::translate(islandModel, pos);
+        islandModel = glm::rotate(islandModel, rotation, glm::vec3(0.0f, 1.0f, 0.0f));
+        islandModel = glm::scale(islandModel, glm::vec3(islandScale, 1.0f, islandScale));
+
+        setMat(rockTex, MAT_ROCK, 3.0f);
+        if (!gIslandRockMeshes.empty())
         {
-            glm::mat4 rock(1.0f);
-            rock = glm::translate(rock, pos + glm::vec3(0.25f * layer, layer * 0.35f, -0.15f * layer));
-            rock = glm::scale(rock, glm::vec3(4.4f - layer * 0.9f, 0.9f, 4.0f - layer * 0.7f));
-            drawCube(shader, rock);
+            drawGeneratedMesh(shader, gIslandRockMeshes[i % gIslandRockMeshes.size()], islandModel);
         }
 
-        setMat(grassTex, MAT_GRASS, 3.0f);
-        glm::mat4 grass(1.0f);
-        grass = glm::translate(grass, pos + glm::vec3(0.1f, 1.15f, 0.0f));
-        grass = glm::scale(grass, glm::vec3(2.9f, 0.32f, 2.5f));
-        drawCube(shader, grass);
-
-        // simple palms/masts
-        setMat(woodTex, MAT_WOOD, 1.0f);
-        for (int trunk = 0; trunk < 2; ++trunk)
+        setMat(grassTex, MAT_GRASS, 2.1f);
+        if (!gIslandGrassMeshes.empty())
         {
-            glm::mat4 t(1.0f);
-            float xoff = trunk == 0 ? -0.6f : 0.65f;
-            float zoff = trunk == 0 ? 0.55f : -0.5f;
-            t = glm::translate(t, pos + glm::vec3(xoff, 2.1f, zoff));
-            t = glm::rotate(t, glm::radians(trunk == 0 ? 8.0f : -10.0f), glm::vec3(0, 0, 1));
-            t = glm::scale(t, glm::vec3(0.18f, 2.1f, 0.18f));
-            drawCube(shader, t);
+            drawGeneratedMesh(shader, gIslandGrassMeshes[i % gIslandGrassMeshes.size()], islandModel);
+        }
 
-            setMat(grassTex, MAT_GRASS, 1.0f);
-            glm::mat4 leaf(1.0f);
-            leaf = glm::translate(leaf, pos + glm::vec3(xoff, 3.1f, zoff));
-            leaf = glm::rotate(leaf, glm::radians(22.0f + trunk * 18.0f), glm::vec3(0, 1, 0));
-            leaf = glm::scale(leaf, glm::vec3(1.25f, 0.12f, 0.34f));
-            drawCube(shader, leaf);
+        auto localToWorld = [&](float localX, float localZ, float extraY = 0.0f) -> glm::vec3
+        {
+            glm::vec4 world = islandModel * glm::vec4(localX, 0.0f, localZ, 1.0f);
+            float groundY = pos.y + islandSurfaceHeight(localX, localZ, islandRadius, islandHeight, seed) + extraY;
+            return glm::vec3(world.x, groundY, world.z);
+        };
+
+        // Small grass tufts hide hard edges and make the top feel less like one flat texture patch.
+        setMat(grassTex, MAT_GRASS, 1.2f);
+        for (int tuft = 0; tuft < 9; ++tuft)
+        {
+            float angle = static_cast<float>(tuft) * 0.91f + seed;
+            float dist = 0.35f + 0.85f * (static_cast<float>((tuft * 37) % 100) / 100.0f);
+            float localX = std::cos(angle) * dist;
+            float localZ = std::sin(angle) * dist * 0.82f;
+            glm::vec3 tuftPos = localToWorld(localX, localZ, 0.09f);
+
+            glm::mat4 blade(1.0f);
+            blade = glm::translate(blade, tuftPos);
+            blade = glm::rotate(blade, rotation + angle, glm::vec3(0.0f, 1.0f, 0.0f));
+            blade = glm::rotate(blade, glm::radians(7.0f + tuft * 3.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+            blade = glm::scale(blade, glm::vec3(0.045f, 0.20f + 0.025f * (tuft % 3), 0.035f));
+            drawCube(shader, blade);
+        }
+
+        // Imported tree model.
+        // The tree is automatically centred and grounded using the OBJ bounds calculated in loadOBJModel().
+        // If tree.obj is missing, the old cube-palm fallback is still drawn so the scene remains usable.
+        if (treeModel.loaded)
+        {
+            GLuint activeTreeTexture = treeTex != 0 ? treeTex : grassTex;
+            setMat(activeTreeTexture, MAT_WOOD, 1.0f);
+
+            auto buildGroundedTreeTransform = [&](const glm::vec3& basePosition,
+                                                  float yawRadians,
+                                                  float desiredHeight,
+                                                  float extraScale = 1.0f) -> glm::mat4
+            {
+                glm::vec3 boundsSize = treeModel.maxBounds - treeModel.minBounds;
+                float sourceHeight = std::max(boundsSize.y, 0.001f);
+                float scaleAmount = (desiredHeight / sourceHeight) * extraScale;
+
+                float centreX = (treeModel.minBounds.x + treeModel.maxBounds.x) * 0.5f;
+                float centreZ = (treeModel.minBounds.z + treeModel.maxBounds.z) * 0.5f;
+
+                glm::mat4 treeMatrix(1.0f);
+                treeMatrix = glm::translate(treeMatrix, basePosition);
+                treeMatrix = glm::rotate(treeMatrix, yawRadians, glm::vec3(0.0f, 1.0f, 0.0f));
+                treeMatrix = glm::scale(treeMatrix, glm::vec3(scaleAmount));
+                treeMatrix = glm::translate(treeMatrix, glm::vec3(-centreX, -treeModel.minBounds.y, -centreZ));
+                return treeMatrix;
+            };
+
+            struct TreeSpot
+            {
+                float x;
+                float z;
+                float height;
+                float yawOffset;
+                float scale;
+            };
+
+            const TreeSpot treeSpots[] = {
+                { -0.62f,  0.40f, 1.75f, -18.0f, 1.00f },
+                {  0.64f, -0.34f, 1.55f,  24.0f, 0.88f },
+                {  0.10f,  0.70f, 1.35f,  67.0f, 0.78f }
+            };
+
+            for (const TreeSpot& spot : treeSpots)
+            {
+                glm::vec3 treeBase = localToWorld(spot.x, spot.z, 0.035f);
+                glm::mat4 treeMatrix = buildGroundedTreeTransform(
+                    treeBase,
+                    rotation + glm::radians(spot.yawOffset + static_cast<float>(i) * 19.0f),
+                    spot.height,
+                    spot.scale
+                );
+
+                drawModel(shader, treeModel, treeMatrix);
+            }
+        }
+        else
+        {
+            // Fallback cube palms in case the OBJ is not included in the submitted repo.
+            setMat(woodTex, MAT_WOOD, 1.0f);
+            for (int trunk = 0; trunk < 2; ++trunk)
+            {
+                float xoff = trunk == 0 ? -0.56f : 0.62f;
+                float zoff = trunk == 0 ? 0.42f : -0.34f;
+                float lean = trunk == 0 ? 7.0f : -8.5f;
+                float trunkHeight = trunk == 0 ? 1.42f : 1.26f;
+                float trunkWidth = trunk == 0 ? 0.13f : 0.115f;
+
+                glm::vec3 treeBase = localToWorld(xoff, zoff, 0.03f);
+                glm::vec3 trunkCentre = treeBase + glm::vec3(0.0f, trunkHeight * 0.5f, 0.0f);
+
+                glm::mat4 t(1.0f);
+                t = glm::translate(t, trunkCentre);
+                t = glm::rotate(t, rotation + glm::radians(trunk == 0 ? -6.0f : 14.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+                t = glm::rotate(t, glm::radians(lean), glm::vec3(0.0f, 0.0f, 1.0f));
+                t = glm::scale(t, glm::vec3(trunkWidth, trunkHeight, trunkWidth));
+                drawCube(shader, t);
+
+                glm::vec3 leafCentre = treeBase + glm::vec3(0.0f, trunkHeight + 0.04f, 0.0f);
+                setMat(grassTex, MAT_GRASS, 1.0f);
+                for (int leafIndex = 0; leafIndex < 6; ++leafIndex)
+                {
+                    float leafYaw = rotation + glm::radians(leafIndex * 60.0f + trunk * 17.0f);
+                    float leafLength = 0.58f + 0.08f * static_cast<float>(leafIndex % 2);
+
+                    glm::mat4 leaf(1.0f);
+                    leaf = glm::translate(leaf, leafCentre);
+                    leaf = glm::rotate(leaf, leafYaw, glm::vec3(0.0f, 1.0f, 0.0f));
+                    leaf = glm::rotate(leaf, glm::radians(-13.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+                    leaf = glm::translate(leaf, glm::vec3(leafLength * 0.38f, -0.035f, 0.0f));
+                    leaf = glm::scale(leaf, glm::vec3(leafLength, 0.045f, 0.13f));
+                    drawCube(shader, leaf);
+                }
+
+                glm::mat4 crown(1.0f);
+                crown = glm::translate(crown, leafCentre + glm::vec3(0.0f, -0.025f, 0.0f));
+                crown = glm::rotate(crown, rotation, glm::vec3(0.0f, 1.0f, 0.0f));
+                crown = glm::scale(crown, glm::vec3(0.16f, 0.10f, 0.16f));
+                drawCube(shader, crown);
+
+                setMat(woodTex, MAT_WOOD, 1.0f);
+            }
+        }
+
+        // Clean island indicators.
+        // Kept intentionally simple so they read from far away without looking like chunky blocks:
+        // 0 Harbour Waters = small square harbour sign
+        // 1 Reef Edge      = slim V-fin marker
+        // 2 Deep Trench    = tall narrow pennant / spike
+        if (i < 3)
+        {
+            GLuint markerTex = zoneMarkerTex[i] != 0 ? zoneMarkerTex[i] : buoyTex;
+
+            float markerLocalX = 0.0f;
+            float markerLocalZ = -islandRadius * 0.56f;
+            glm::vec3 markerBase = localToWorld(markerLocalX, markerLocalZ, 0.06f);
+
+            setMat(woodTex, MAT_WOOD, 1.0f);
+
+            // Shared slim post.
+            glm::mat4 post(1.0f);
+            post = glm::translate(post, markerBase + glm::vec3(0.0f, 0.62f, 0.0f));
+            post = glm::rotate(post, rotation, glm::vec3(0.0f, 1.0f, 0.0f));
+            post = glm::scale(post, glm::vec3(0.06f, 1.24f, 0.06f));
+            drawCube(shader, post);
+
+            glm::vec3 iconCentre = markerBase + glm::vec3(0.0f, 1.34f, 0.0f);
+            setMat(markerTex, MAT_LIGHT, 1.0f);
+
+            if (i == 0)
+            {
+                // Harbour Waters: a clean flat signboard.
+                glm::mat4 sign(1.0f);
+                sign = glm::translate(sign, iconCentre + glm::vec3(0.0f, 0.02f, 0.0f));
+                sign = glm::rotate(sign, rotation, glm::vec3(0.0f, 1.0f, 0.0f));
+                sign = glm::scale(sign, glm::vec3(0.28f, 0.22f, 0.05f));
+                drawCube(shader, sign);
+
+                glm::mat4 trim(1.0f);
+                trim = glm::translate(trim, iconCentre + glm::vec3(0.0f, -0.16f, 0.0f));
+                trim = glm::rotate(trim, rotation, glm::vec3(0.0f, 1.0f, 0.0f));
+                trim = glm::scale(trim, glm::vec3(0.18f, 0.035f, 0.035f));
+                drawCube(shader, trim);
+            }
+            else if (i == 1)
+            {
+                // Reef Edge: slim twin fins in a V shape.
+                for (int fin = 0; fin < 2; ++fin)
+                {
+                    glm::mat4 reefFin(1.0f);
+                    reefFin = glm::translate(reefFin, iconCentre + glm::vec3(fin == 0 ? -0.08f : 0.08f, 0.04f, 0.0f));
+                    reefFin = glm::rotate(reefFin, rotation + glm::radians(fin == 0 ? -18.0f : 18.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+                    reefFin = glm::rotate(reefFin, glm::radians(fin == 0 ? -10.0f : 10.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+                    reefFin = glm::scale(reefFin, glm::vec3(0.07f, 0.42f, 0.09f));
+                    drawCube(shader, reefFin);
+                }
+            }
+            else
+            {
+                // Deep Trench: narrow tall marker with a tiny crossbar.
+                glm::mat4 spike(1.0f);
+                spike = glm::translate(spike, iconCentre + glm::vec3(0.0f, 0.12f, 0.0f));
+                spike = glm::rotate(spike, rotation, glm::vec3(0.0f, 1.0f, 0.0f));
+                spike = glm::scale(spike, glm::vec3(0.08f, 0.62f, 0.08f));
+                drawCube(shader, spike);
+
+                glm::mat4 crossbar(1.0f);
+                crossbar = glm::translate(crossbar, iconCentre + glm::vec3(0.0f, 0.28f, 0.0f));
+                crossbar = glm::rotate(crossbar, rotation, glm::vec3(0.0f, 1.0f, 0.0f));
+                crossbar = glm::scale(crossbar, glm::vec3(0.18f, 0.03f, 0.03f));
+                drawCube(shader, crossbar);
+            }
         }
     }
 
@@ -2033,49 +2559,10 @@ void renderWorldGeometry(GLuint shader, bool depthPass, float time)
         }
     }
 
-    // Zone buoys
-    for (size_t zoneIndex = 0; zoneIndex < zones.size(); ++zoneIndex)
-    {
-        const auto& zone = zones[zoneIndex];
-        float pulse = 1.0f + std::sin(time * 2.1f + zone.center.x) * 0.05f;
-        setMat(buoyTex, MAT_BUOY, 1.0f);
-
-        glm::vec3 bodyScale(0.4f, 1.2f, 0.4f);
-        glm::vec3 topScale(0.24f, 0.24f, 0.24f);
-        if (zoneIndex == 0)
-        {
-            bodyScale = glm::vec3(0.46f, 1.0f, 0.46f);
-            topScale = glm::vec3(0.28f, 0.18f, 0.28f);
-        }
-        else if (zoneIndex == 1)
-        {
-            bodyScale = glm::vec3(0.34f, 1.45f, 0.34f);
-            topScale = glm::vec3(0.18f, 0.30f, 0.18f);
-        }
-        else
-        {
-            bodyScale = glm::vec3(0.42f, 1.55f, 0.42f);
-            topScale = glm::vec3(0.30f, 0.22f, 0.30f);
-        }
-
-        glm::vec3 basePos = zone.center + glm::vec3(0.0f, 0.7f + std::sin(time * 1.4f + zone.center.z) * 0.08f, 0.0f);
-
-        glm::mat4 buoy(1.0f);
-        buoy = glm::translate(buoy, basePos);
-        buoy = glm::scale(buoy, bodyScale * pulse);
-        drawCube(shader, buoy);
-
-        glm::mat4 buoyTop(1.0f);
-        buoyTop = glm::translate(buoyTop, basePos + glm::vec3(0.0f, bodyScale.y * 0.72f + topScale.y * 0.6f, 0.0f));
-        buoyTop = glm::scale(buoyTop, topScale * pulse);
-        drawCube(shader, buoyTop);
-
-        setMat(woodTex, MAT_WOOD, 1.0f);
-        glm::mat4 mast(1.0f);
-        mast = glm::translate(mast, zone.center + glm::vec3(0.0f, 1.75f + zoneIndex * 0.12f, 0.0f));
-        mast = glm::scale(mast, glm::vec3(0.08f, 1.1f + zoneIndex * 0.2f, 0.08f));
-        drawCube(shader, mast);
-    }
+    // Old zone buoys removed.
+    // They were drawn at the exact fishing-zone centres, which are also the island centres,
+    // so they appeared as unexplained blocky objects on top of the islands.
+    // The island identifier markers are now drawn inside the procedural island loop above.
 
     float centerH = getWaterHeight(boat.position.x, boat.position.z, time);
     float frontH  = getWaterHeight(boat.position.x, boat.position.z + 0.75f, time);
@@ -2342,6 +2829,7 @@ int main()
     }
 
     setupCube();
+    setupGeneratedIslandMeshes();
     setupPlane();
     setupSkybox();
     setupParticles();
@@ -2356,6 +2844,10 @@ int main()
         loadOBJModel("media/models/sword.obj", swordModel);
     }
 
+    // Optional natural tree model used on the procedural mini islands.
+    // Keep tree.obj, tree.mtl and treecolorpallet.png in media/models/.
+    loadOBJModel("media/models/tree.obj", treeModel);
+
     woodTex = loadTextureFromFile("media/wood.jpg");
     if (woodTex == 0) woodTex = createWoodTexture();
 
@@ -2365,11 +2857,19 @@ int main()
     grassTex = loadTextureFromFile("media/grass.jpg");
     if (grassTex == 0) grassTex = createGrassTexture();
 
+    treeTex = loadTextureFromFile("media/models/treecolorpallet.png");
+    if (treeTex == 0) treeTex = grassTex;
+
     boatTex = loadTextureFromFile("textures/boat.jpg");
     if (boatTex == 0) boatTex = createBoatTexture();
 
     buoyTex = loadTextureFromFile("textures/buoy.jpg");
     if (buoyTex == 0) buoyTex = createBuoyTexture();
+
+    // Bright marker textures used to identify each fishing island from far away.
+    zoneMarkerTex[0] = createSolidColorTexture(255, 190, 70);   // Harbour Waters
+    zoneMarkerTex[1] = createSolidColorTexture(60, 230, 180);   // Reef Edge
+    zoneMarkerTex[2] = createSolidColorTexture(150, 85, 255);   // Deep Trench
 
     skyboxCubemap = createFallbackCubemap();
 
