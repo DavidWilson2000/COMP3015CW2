@@ -11,7 +11,8 @@ enum class PostProcessMode
     Blur = 2,
     NightVision = 3,
     GodRays = 4,
-    SSAO = 5
+    SSAO = 5,
+    DepthOfField = 6
 };
 
 class PostProcessor

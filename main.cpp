@@ -591,6 +591,7 @@ void key_callback(GLFWwindow* window, int key, int, int action, int)
 
     if (action == GLFW_PRESS)
     {
+        if (key == GLFW_KEY_F4) gPostMode = PostProcessMode::DepthOfField;
         if (key == GLFW_KEY_F5) gPostMode = PostProcessMode::Edge;
         if (key == GLFW_KEY_F6) gPostMode = PostProcessMode::Blur;
         if (key == GLFW_KEY_F7) gPostMode = PostProcessMode::NightVision;
@@ -2776,6 +2777,7 @@ int main()
         else if (gPostMode == PostProcessMode::NightVision) postLabel = "NightVision";
         else if (gPostMode == PostProcessMode::GodRays) postLabel = "GodRays";
         else if (gPostMode == PostProcessMode::SSAO) postLabel = "SSAO";
+        else if (gPostMode == PostProcessMode::DepthOfField) postLabel = "DepthOfField";
         title << " | PP: " << postLabel
               << " | Shadows: " << getShadowFilterLabel()
               << " | Camera: " << GetCameraModeLabel()

@@ -12,6 +12,9 @@ uniform vec2 sunScreenPos;
 uniform vec3 sunColor;
 uniform float sunVisibility;
 uniform float dayFactor;
+uniform float dofFocusDistance;
+uniform float dofFocusRange;
+uniform float dofMaxBlurPixels;
 
 const float NEAR_PLANE = 0.1;
 const float FAR_PLANE = 500.0;
@@ -154,6 +157,54 @@ vec3 ApplySSAO(vec2 uv)
     return colour * ao;
 }
 
+vec3 DepthOfFieldBlur(vec2 uv, float radius)
+{
+    vec3 sum = texture(sceneTex, uv).rgb * 4.0;
+    float weight = 4.0;
+
+    vec2 offsets[16] = vec2[](
+        vec2( 1.0,  0.0), vec2(-1.0,  0.0), vec2( 0.0,  1.0), vec2( 0.0, -1.0),
+        vec2( 0.7,  0.7), vec2(-0.7,  0.7), vec2( 0.7, -0.7), vec2(-0.7, -0.7),
+        vec2( 1.7,  0.4), vec2(-1.7,  0.4), vec2( 1.7, -0.4), vec2(-1.7, -0.4),
+        vec2( 0.4,  1.7), vec2(-0.4,  1.7), vec2( 0.4, -1.7), vec2(-0.4, -1.7)
+    );
+
+    for (int i = 0; i < 16; ++i)
+    {
+        vec2 sampleUv = uv + offsets[i] * texelSize * radius;
+        sum += texture(sceneTex, sampleUv).rgb;
+        weight += 1.0;
+    }
+
+    return sum / weight;
+}
+
+vec3 ApplyDepthOfField(vec2 uv)
+{
+    vec3 sharp = texture(sceneTex, uv).rgb;
+    float rawDepth = texture(depthTex, uv).r;
+
+    float depth = LineariseDepth(rawDepth);
+
+    // Circle of confusion approximation. The current values are tuned so the
+    // boat/camera target remains readable while distant scenery and sky soften.
+    float focusDistance = max(dofFocusDistance, 0.1);
+    float focusRange = max(dofFocusRange, 0.1);
+    float coc = saturate(abs(depth - focusDistance) / focusRange);
+    coc = smoothstep(0.05, 1.0, coc);
+
+    // Treat the skybox/background as distant and slightly out of focus.
+    if (rawDepth >= 0.9999)
+        coc = max(coc, 0.72);
+
+    float radius = dofMaxBlurPixels * coc;
+    vec3 blurred = DepthOfFieldBlur(uv, radius);
+
+    // Blend rather than fully replacing the image so the effect is clear but
+    // still usable during gameplay and demonstration.
+    return mix(sharp, blurred, coc * 0.9);
+}
+
 void main()
 {
     vec2 uv = TexCoords;
@@ -178,6 +229,10 @@ void main()
     else if (mode == 5)
     {
         colour = ApplySSAO(uv);
+    }
+    else if (mode == 6)
+    {
+        colour = ApplyDepthOfField(uv);
     }
 
     FragColor = vec4(colour, 1.0);

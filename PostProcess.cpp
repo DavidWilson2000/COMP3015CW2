@@ -86,9 +86,8 @@ void PostProcessor::CreateBuffers()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTex_, 0);
 
-    // Use a depth texture instead of a depth renderbuffer.
-    // This keeps depth testing exactly the same, but also lets the fullscreen
-    // post-process shader sample scene depth for screen-space ambient occlusion.
+    // This must be a depth texture rather than a renderbuffer because SSAO and
+    // depth of field need to sample scene depth in the post-process shader.
     glGenTextures(1, &depthTex_);
     glBindTexture(GL_TEXTURE_2D, depthTex_);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width_, height_, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
@@ -96,6 +95,7 @@ void PostProcessor::CreateBuffers()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthTex_, 0);
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
@@ -242,6 +242,12 @@ void PostProcessor::Render(PostProcessMode mode, float time,
     glUniform3f(glGetUniformLocation(shader_, "sunColor"), sunColor.r, sunColor.g, sunColor.b);
     glUniform1f(glGetUniformLocation(shader_, "sunVisibility"), sunVisibility);
     glUniform1f(glGetUniformLocation(shader_, "dayFactor"), dayFactor);
+
+    // Tuned for the current third-person boat camera. The boat/near water stay
+    // relatively sharp while distant islands/sky soften in DepthOfField mode.
+    glUniform1f(glGetUniformLocation(shader_, "dofFocusDistance"), 9.6f);
+    glUniform1f(glGetUniformLocation(shader_, "dofFocusRange"), 4.0f);
+    glUniform1f(glGetUniformLocation(shader_, "dofMaxBlurPixels"), 8.0f);
 
     glBindVertexArray(quadVao_);
     glDrawArrays(GL_TRIANGLES, 0, 6);
