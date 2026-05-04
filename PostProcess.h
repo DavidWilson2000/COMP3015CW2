@@ -10,7 +10,8 @@ enum class PostProcessMode
     Edge = 1,
     Blur = 2,
     NightVision = 3,
-    GodRays = 4
+    GodRays = 4,
+    SSAO = 5
 };
 
 class PostProcessor
@@ -39,7 +40,7 @@ private:
     int height_ = 0;
     GLuint fbo_ = 0;
     GLuint colorTex_ = 0;
-    GLuint depthRbo_ = 0;
+    GLuint depthTex_ = 0;
     GLuint quadVao_ = 0;
     GLuint quadVbo_ = 0;
     GLuint shader_ = 0;

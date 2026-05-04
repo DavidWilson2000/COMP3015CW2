@@ -110,7 +110,7 @@
 copy /Y "$(SolutionDir)OpenGL\lib\glfw3.dll"        "$(TargetDir)"
 copy /Y "$(SolutionDir)OpenGL\lib\glew32.dll"        "$(TargetDir)"
 copy /Y "G:\Downloads\Comp3015 Pt2\COMP3015\Project_Template\Lab 1\OpenGL\lib\irrKlang.dll" "$(OutDir)"
-
+copy /Y "$(SolutionDir)OpenGL\lib\irrKlang.dll" "$(OutDir)"
 xcopy /E /I /Y "$(ProjectDir)shader"  "$(TargetDir)shader"
 xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
 
@@ -141,7 +141,7 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
 copy /Y "$(SolutionDir)OpenGL\lib\glfw3.dll"        "$(TargetDir)"
 copy /Y "$(SolutionDir)OpenGL\lib\glew32.dll"        "$(TargetDir)"
 copy /Y "G:\Downloads\Comp3015 Pt2\COMP3015\Project_Template\Lab 1\OpenGL\lib\irrKlang.dll" "$(OutDir)"
-
+copy /Y "$(SolutionDir)OpenGL\lib\irrKlang.dll" "$(OutDir)"
 xcopy /E /I /Y "$(ProjectDir)shader"  "$(TargetDir)shader"
 xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
 
@@ -168,7 +168,7 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
 copy /Y "$(SolutionDir)OpenGL\lib\glfw3.dll"        "$(TargetDir)"
 copy /Y "$(SolutionDir)OpenGL\lib\glew32.dll"        "$(TargetDir)"
 copy /Y "G:\Downloads\Comp3015 Pt2\COMP3015\Project_Template\Lab 1\OpenGL\lib\irrKlang.dll" "$(OutDir)"
-
+copy /Y "$(SolutionDir)OpenGL\lib\irrKlang.dll" "$(OutDir)"
 xcopy /E /I /Y "$(ProjectDir)shader"  "$(TargetDir)shader"
 xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
 
@@ -199,7 +199,7 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
 copy /Y "$(SolutionDir)OpenGL\lib\glfw3.dll"        "$(TargetDir)"
 copy /Y "$(SolutionDir)OpenGL\lib\glew32.dll"        "$(TargetDir)"
 copy /Y "G:\Downloads\Comp3015 Pt2\COMP3015\Project_Template\Lab 1\OpenGL\lib\irrKlang.dll" "$(OutDir)"
-
+copy /Y "$(SolutionDir)OpenGL\lib\irrKlang.dll" "$(OutDir)"
 xcopy /E /I /Y "$(ProjectDir)shader"  "$(TargetDir)shader"
 xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
 

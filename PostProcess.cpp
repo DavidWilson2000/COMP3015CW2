@@ -86,10 +86,17 @@ void PostProcessor::CreateBuffers()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTex_, 0);
 
-    glGenRenderbuffers(1, &depthRbo_);
-    glBindRenderbuffer(GL_RENDERBUFFER, depthRbo_);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width_, height_);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depthRbo_);
+    // Use a depth texture instead of a depth renderbuffer.
+    // This keeps depth testing exactly the same, but also lets the fullscreen
+    // post-process shader sample scene depth for screen-space ambient occlusion.
+    glGenTextures(1, &depthTex_);
+    glBindTexture(GL_TEXTURE_2D, depthTex_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width_, height_, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthTex_, 0);
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
     {
@@ -101,10 +108,10 @@ void PostProcessor::CreateBuffers()
 
 void PostProcessor::DestroyBuffers()
 {
-    if (depthRbo_ != 0)
+    if (depthTex_ != 0)
     {
-        glDeleteRenderbuffers(1, &depthRbo_);
-        depthRbo_ = 0;
+        glDeleteTextures(1, &depthTex_);
+        depthTex_ = 0;
     }
     if (colorTex_ != 0)
     {
@@ -217,9 +224,15 @@ void PostProcessor::Render(PostProcessMode mode, float time,
 {
     glDisable(GL_DEPTH_TEST);
     glUseProgram(shader_);
+
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, colorTex_);
     glUniform1i(glGetUniformLocation(shader_, "sceneTex"), 0);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, depthTex_);
+    glUniform1i(glGetUniformLocation(shader_, "depthTex"), 1);
+
     glUniform1i(glGetUniformLocation(shader_, "mode"), static_cast<int>(mode));
     glUniform2f(glGetUniformLocation(shader_, "texelSize"),
         1.0f / static_cast<float>(width_),
@@ -234,4 +247,4 @@ void PostProcessor::Render(PostProcessMode mode, float time,
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindVertexArray(0);
     glEnable(GL_DEPTH_TEST);
-} 
+}

@@ -598,6 +598,7 @@ void key_callback(GLFWwindow* window, int key, int, int action, int)
         if (key == GLFW_KEY_F9) gShadowFilterMode = (gShadowFilterMode == ShadowFilterMode::PCSS) ? ShadowFilterMode::PCF : ShadowFilterMode::PCSS;
         if (key == GLFW_KEY_F10) gAnimateSunCycle = !gAnimateSunCycle;
         if (key == GLFW_KEY_F11) gPostMode = PostProcessMode::GodRays;
+        if (key == GLFW_KEY_F12) gPostMode = PostProcessMode::SSAO;
     }
 
     if (key >= 0 && key < 1024)
@@ -2774,6 +2775,7 @@ int main()
         else if (gPostMode == PostProcessMode::Blur) postLabel = "Blur";
         else if (gPostMode == PostProcessMode::NightVision) postLabel = "NightVision";
         else if (gPostMode == PostProcessMode::GodRays) postLabel = "GodRays";
+        else if (gPostMode == PostProcessMode::SSAO) postLabel = "SSAO";
         title << " | PP: " << postLabel
               << " | Shadows: " << getShadowFilterLabel()
               << " | Camera: " << GetCameraModeLabel()
