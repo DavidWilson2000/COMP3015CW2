@@ -16,7 +16,7 @@ GitHub repository:
 ## Video report
 
 Video walkthrough and explanation:  
-[**https://youtu.be/15sWXQSl3cQ**](https://youtu.be/S8KJzOqUgmY)
+https://youtu.be/S8KJzOqUgmY
 
 ---
 
@@ -122,7 +122,7 @@ LostIslandSetpiece.cpp
 |---|---|
 | **G** | Debug/test gold and progression helper used during development |
 
-For final game, this should either be removed or disabled.
+This is a development/debug helper and is included only for testing and demonstration.
 
 ---
 
@@ -132,11 +132,12 @@ The project includes fallback path checks for important resources such as shader
 
 When loading resources, the program can try multiple relative path options, such as:
 
-text
+```text
 media/sounds
 ../media/sounds
 ../../media/sounds
 ../../../media/sounds
+```
 
 ## Main gameplay loop
 
@@ -539,7 +540,7 @@ The post-processing pipeline supports:
 - god rays
 - normal rendering reset
 
-These are controlled with **F5–F8** and **F11**.
+These are controlled with **F4–F12**
 
 ### Animated water
 
@@ -636,6 +637,11 @@ The project is now split into clearer systems.
 | `PostProcess.h/.cpp` | Fullscreen post-processing pipeline |
 | `LostIslandSetpiece.h/.cpp` | Final altar and sword transforms |
 | `SimpleOBJLoader.h` | OBJ model loading |
+| `GameTypes.h` | Shared gameplay/rendering structures such as fish, boat, particles, weather and camera enums |
+| `WeatherSystem.h/.cpp` | Dynamic weather states and weather modifiers |
+| `ResourceUtils.h/.cpp` | Resource loading, shader loading, texture creation, and fallback path helpers |
+| `GeometrySetup.h/.cpp` | VAO/VBO setup for reusable geometry |
+| `ParticleEffects.h/.cpp` | Particle spawning, updating, wake, splash, aura, and ambient effects |
 
 This structure makes `main.cpp` more of a coordinator rather than a single file containing every system.
 
@@ -1063,7 +1069,7 @@ NVIDIA (2005) *Percentage-Closer Soft Shadows*. Available at: https://developer.
 
 Shi, P., Billeter, M. and Eisemann, E. (2022) ‘Stereo-consistent screen-space ambient occlusion’, *Proceedings of the ACM on Computer Graphics and Interactive Techniques*, 5(1), Article 2. Available at: https://doi.org/10.1145/3522614
 
-Zhang, D., Xian, C., Luo, G., Xiong, Y. and Han, C. (2020) ‘DeepAO: Efficient Screen Space Ambient Occlusion Generation via Deep Network’, *IEEE Access*, 8, pp. 64434–64441. Avaliable at :https://www.researchgate.net/publication/340366569_DeepAO_Efficient_Screen_Space_Ambient_Occlusion_Generation_via_Deep_Network
+Zhang, D., Xian, C., Luo, G., Xiong, Y. and Han, C. (2020) ‘DeepAO: Efficient Screen Space Ambient Occlusion Generation via Deep Network’, *IEEE Access*, 8, pp. 64434–64441. Available at :https://www.researchgate.net/publication/340366569_DeepAO_Efficient_Screen_Space_Ambient_Occlusion_Generation_via_Deep_Network
 
 Tan, Y.W., Chua, N., Biette, N. and Bhojan, A. (2022) ‘A Hybrid System for Real-time Rendering of Depth of Field Effect in Games’. Available at: https://arxiv.org/abs/2210.06158
 
@@ -1087,5 +1093,5 @@ Stone: https://www.magnific.com/free-photos-vectors/stone-png
 Wood: https://www.magnific.com/free-photos-vectors/wood-png
 
 
-All sounds gotten from pixabay: https://pixabay.com/sound-effects/
+All sound effects were obtained from Pixabay:: https://pixabay.com/sound-effects/
 
