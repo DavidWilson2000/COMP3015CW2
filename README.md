@@ -190,7 +190,7 @@ This makes the scene function as a small game prototype with fishing, economy, u
 - Lost Island unlock.
 - Final shrine objective.
 - Victory screen and celebration feedback.
-- - Dock shop opened with **E** at the dock.
+- Dock shop opened with **E** at the dock.
 - Clickable shop interface.
 - Fish selling one at a time.
 - Sell-all cargo option.
@@ -259,7 +259,7 @@ This makes the scene function as a small game prototype with fishing, economy, u
 - Scrap count shown in the quest panel.
 - Shop open/close feedback.
 - Patrol spotted/chase feedback.
-- Harbour mission feedback and completion banners.****
+- Harbour mission feedback and completion banners.
 
 ### Audio features
 
@@ -356,6 +356,10 @@ Chase
 Return to patrol
 ```
 
+The patrol boat uses the same imported boat model as the player boat, but it is scaled smaller and given a different material/colour so it reads clearly as a separate gameplay object. If the patrol detects or catches the player, it creates danger and hull pressure. A looping horn sound plays while the patrol is actively chasing and stops when the chase ends.
+
+This adds a light stealth/chase element to the game and gives the player a reason to move carefully while completing the harbour recovery objective.
+
 ## Dynamic weather system
 
 A dynamic weather system was added to make the sea feel less static and to connect atmosphere with gameplay.
@@ -368,6 +372,10 @@ Fog
 Rain
 Storm
 ```
+
+Each weather state changes both presentation and gameplay. Fog and storm conditions reduce visibility by changing the scene fog, while rain and storm conditions increase danger and make the world feel more hostile. Storm weather also affects boat handling/speed, making sailing back to the dock with valuable cargo more risky.
+
+The weather is displayed in its own side HUD panel so the player can always understand the current environmental condition. This helps connect rendering, atmosphere, and gameplay rather than treating weather as only a visual effect.
 
 
 ## Rendering pipeline
@@ -512,7 +520,7 @@ main.cpp
 ```
 
 
-Tan et al.’s 2022 paper is useful for your references because it discusses real-time depth of field for games and notes that game DoF often uses post-processing approximations. :contentReference[oaicite:2]{index=2}
+This effect is supported by recent real-time depth of field research, including Tan et al.’s 2022 work on real-time depth of field effects in games.
 
 
 ### God rays / light shafts
@@ -708,7 +716,7 @@ The project includes a playable game loop and game design systems:
 - weather affecting fog, danger, and boat handling
 - scrap progress display in the quest HUD
 
-These additions make the game feel more like a complete prototype because the systems now connect into a clearer loop: catch fish, complete contracts, earn gold, upgrade the boat, survive weather/patrol pressure, and progress toward larger objectives.****
+These additions make the game feel more like a complete prototype because the systems now connect into a clearer loop: catch fish, complete contracts, earn gold, upgrade the boat, survive weather/patrol pressure, and progress toward larger objectives.
 
 ### 90–100 range: research-style advanced features
 
@@ -820,8 +828,6 @@ The UI includes:
 - settings menu
 - victory screen
 
-
-## Update “UI design” with this paragraph
 
 
 The UI was expanded with a dock shop, shopkeeper portrait, contract tracker, weather tracker, and scrap progress display. The shop HUD supports both keyboard and mouse interaction. Fish are displayed with their PNG artwork and stacked into quantities to keep the interface readable when the player has duplicate catches.
@@ -1062,3 +1068,9 @@ An AI prompts/transcript file or appendix should be included with the final subm
 Fernando, R. (2005) *Percentage-Closer Soft Shadows*. ACM SIGGRAPH 2005 Sketches. Available at: https://doi.org/10.1145/1187112.1187153
 
 NVIDIA (2005) *Percentage-Closer Soft Shadows*. Available at: https://developer.download.nvidia.com/SDK/9.5/Samples/MEDIA/docPix/docs/PCSS.pdf
+
+Shi, P., Billeter, M. and Eisemann, E. (2022) ‘Stereo-consistent screen-space ambient occlusion’, *Proceedings of the ACM on Computer Graphics and Interactive Techniques*, 5(1), Article 2. Available at: https://doi.org/10.1145/3522614
+
+Zhang, D., Xian, C., Luo, G., Xiong, Y. and Han, C. (2020) ‘DeepAO: Efficient Screen Space Ambient Occlusion Generation via Deep Network’, *IEEE Access*, 8, pp. 64434–64441. Avaliable at :https://www.researchgate.net/publication/340366569_DeepAO_Efficient_Screen_Space_Ambient_Occlusion_Generation_via_Deep_Network
+
+Tan, Y.W., Chua, N., Biette, N. and Bhojan, A. (2022) ‘A Hybrid System for Real-time Rendering of Depth of Field Effect in Games’. Available at: https://arxiv.org/abs/2210.06158
