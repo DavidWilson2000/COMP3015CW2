@@ -16,7 +16,7 @@ GitHub repository:
 ## Video report
 
 Video walkthrough and explanation:  
-**https://youtu.be/15sWXQSl3cQ**
+[**https://youtu.be/15sWXQSl3cQ**](https://youtu.be/S8KJzOqUgmY)
 
 ---
 
@@ -1051,7 +1051,6 @@ Generative AI was used for:
 
 All final integration, testing, editing, feature selection, and submission decisions were made by me.
 
-An AI prompts/transcript file or appendix should be included with the final submission if required by the coursework instructions.
 
 ---
 
@@ -1067,3 +1066,26 @@ Shi, P., Billeter, M. and Eisemann, E. (2022) ‘Stereo-consistent screen-space 
 Zhang, D., Xian, C., Luo, G., Xiong, Y. and Han, C. (2020) ‘DeepAO: Efficient Screen Space Ambient Occlusion Generation via Deep Network’, *IEEE Access*, 8, pp. 64434–64441. Avaliable at :https://www.researchgate.net/publication/340366569_DeepAO_Efficient_Screen_Space_Ambient_Occlusion_Generation_via_Deep_Network
 
 Tan, Y.W., Chua, N., Biette, N. and Bhojan, A. (2022) ‘A Hybrid System for Real-time Rendering of Depth of Field Effect in Games’. Available at: https://arxiv.org/abs/2210.06158
+
+
+
+---
+
+
+## Credits
+
+Shopkeeper: https://www.magnific.com/free-vector/happy-fisherman-with-his-catch_149955418.htm#fromView=keyword&page=1&position=0&uuid=5eb39c92-5003-444a-bae2-ffe6606acc00&query=Fisherman+png
+
+LionFish: https://pngtree.com/freepng/lion-fish-on-transparent-background_18536795.html
+
+Grouper: https://pngtree.com/freepng/grouper-fish-in-transparent-background-a-closeup-view-of-freshly-caught-spotted-on_20935568.html
+
+Grass: https://www.magnific.com/free-photos-vectors/grass-texture
+
+Stone: https://www.magnific.com/free-photos-vectors/stone-png
+
+Wood: https://www.magnific.com/free-photos-vectors/wood-png
+
+
+All sounds gotten from pixabay: https://pixabay.com/sound-effects/
+
