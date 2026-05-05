@@ -71,18 +71,23 @@ LostIslandSetpiece.cpp
 | **Arrow Keys** | Look around in free-look camera mode |
 | **Esc** | Quit |
 
-### Fishing, economy, and upgrades
+
+### Fishing, economy, shop, and upgrades
 
 | Control | Action |
 |---|---|
-| **E** | Fish / cast |
+| **E** | Fish / cast when away from dock |
+| **E at dock** | Open dock shop |
+| **E inside shop** | Close dock shop |
+| **Mouse click inside shop** | Select/sell/buy clicked shop item |
+| **Arrow Keys inside shop** | Move shop selection |
+| **Enter inside shop** | Confirm selected shop action |
+| **T at dock / in shop** | Turn in completed shopkeeper contracts |
 | **M** | Toggle fishing minigame on/off |
 | **Space** | Hook during fishing minigame |
-| **R** | Sell cargo at the dock |
-| **1** | Buy rod upgrade |
-| **2** | Buy engine upgrade |
-| **3** | Buy cargo upgrade |
-| **4** | Repair hull at the dock |
+| **Q near scrap** | Salvage harbour repair scrap |
+| **Q at dock with all scrap** | Deliver harbour repair parts |
+| **H** | Reset harbour recovery mission for testing |
 
 ### Menus and progression
 
@@ -101,6 +106,7 @@ LostIslandSetpiece.cpp
 
 | Control | Action |
 |---|---|
+| **F4** | Depth of field post-process |
 | **F5** | Edge detection post-process |
 | **F6** | Blur post-process |
 | **F7** | Night vision post-process |
@@ -108,6 +114,7 @@ LostIslandSetpiece.cpp
 | **F9** | Toggle shadow filtering between PCF and PCSS |
 | **F10** | Toggle dynamic sun cycle |
 | **F11** | God rays / light shafts post-process |
+| **F12** | SSAO / ambient occlusion post-process |
 
 ### Development / testing control
 
@@ -131,23 +138,33 @@ media/sounds
 ../../media/sounds
 ../../../media/sounds
 
- Main gameplay loop
+## Main gameplay loop
 
-The project has a complete game loop:
+The project has a complete interconnected game loop:
 
 1. The player starts at the dock.
 2. The player sails into different fishing zones.
 3. Each zone has its own fish pool, colour tint, fog, danger level, and ambience.
 4. The player catches fish either instantly or using the optional timing minigame.
-5. Fish are stored in cargo.
-6. The player returns to the dock to sell cargo for gold.
-7. Gold is spent on rod, engine, cargo, and hull repair upgrades.
-8. Dangerous water damages the hull and affects the boat.
-9. Higher rod progression allows the player to collect three hidden keys.
-10. Collecting all three keys unlocks the Lost Island.
-11. Reaching the Lost Island triggers the final victory state.
+5. Fish are stored in cargo and displayed through the HUD/shop systems.
+6. The player returns to the dock and opens the shop with **E**.
+7. The dock shop lets the player sell fish one at a time, sell all cargo, repair the hull, and buy upgrades.
+8. Fish stack by type in the shop so duplicate catches are easier to read and sell.
+9. The shopkeeper provides fish contracts that request specific catches for bonus gold.
+10. Contract progress is displayed in a dedicated side HUD.
+11. A dynamic weather system changes between calm, fog, rain, and storm conditions.
+12. Bad weather affects visibility, danger, and boat handling.
+13. The harbour recovery side mission asks the player to salvage scrap and return it to the dock.
+14. An AI patrol boat moves through the harbour and can chase the player.
+15. During a chase, a looping boat horn sound plays until the patrol loses the player.
+16. Gold is spent on rod, engine, cargo, and hull repair upgrades.
+17. Dangerous water, storms, and patrol hits can damage the hull and affect boat performance.
+18. Higher rod progression allows the player to collect three hidden keys.
+19. Collecting all three keys unlocks the Lost Island.
+20. Reaching the Lost Island triggers the final victory state.
 
-This makes the scene function as a game rather than only a graphics demonstration.
+This makes the scene function as a small game prototype with fishing, economy, upgrades, contracts, weather, stealth/chase pressure, and exploration rather than only a graphics demonstration.
+
 
 ---
 
@@ -173,6 +190,25 @@ This makes the scene function as a game rather than only a graphics demonstratio
 - Lost Island unlock.
 - Final shrine objective.
 - Victory screen and celebration feedback.
+- - Dock shop opened with **E** at the dock.
+- Clickable shop interface.
+- Fish selling one at a time.
+- Sell-all cargo option.
+- Fish stacks/quantities in the shop.
+- Shopkeeper contract system.
+- Contract completion rewards.
+- Contract progress side HUD.
+- Harbour recovery side mission.
+- Collectable scrap repair parts.
+- Imported/fallback scrap model support.
+- Scrap progress shown in the quest HUD.
+- AI patrol boat.
+- Patrol/chase/return finite-state behaviour.
+- Patrol damage/hull pressure.
+- Patrol horn audio loop during chase.
+- Dynamic weather system.
+- Weather states: calm, fog, rain, and storm.
+- Weather affects visibility, danger, and boat handling.
 
 ### World and level features
 
@@ -185,6 +221,12 @@ This makes the scene function as a game rather than only a graphics demonstratio
 - Imported sword model / fallback sword transform.
 - Zone-based atmosphere and water mood.
 - Hidden/fogged Lost Island progression behaviour before unlock.
+- AI patrol boat uses the imported boat model with a separate patrol material.
+- Smaller patrol boat scale to distinguish it from the player boat.
+- Scrap collectables can use an imported `scrap.obj` model.
+- Dock shop/shopkeeper interaction point at the starting dock.
+- Weather-driven atmosphere variation across the whole scene.
+- Fog and storm states make the world feel more hostile and less predictable.
 
 ### UI and feedback features
 
@@ -205,6 +247,19 @@ This makes the scene function as a game rather than only a graphics demonstratio
 - Settings menu.
 - Brightness control.
 - Master/music/SFX volume controls.
+- Dock shop HUD.
+- Clickable shop cards.
+- Shopkeeper portrait support.
+- Stacked fish quantities in the shop.
+- Fish PNGs displayed inside shop cards.
+- Shop upgrade/service buttons.
+- Contract side HUD.
+- Contract progress tracking.
+- Weather side HUD.
+- Scrap count shown in the quest panel.
+- Shop open/close feedback.
+- Patrol spotted/chase feedback.
+- Harbour mission feedback and completion banners.****
 
 ### Audio features
 
@@ -216,7 +271,10 @@ This makes the scene function as a game rather than only a graphics demonstratio
 - Lost Island audio mood.
 - Volume controls for master, music, and SFX.
 - Audio feedback tied to gameplay events.
-
+- Looping patrol horn sound during AI chase state.
+- Horn stops when the patrol chase ends or the harbour mission is completed.
+- Additional gameplay audio feedback for harbour recovery and shop actions.
+  
 ### Rendering and shader features
 
 - Multiple custom GLSL shader programs.
@@ -243,8 +301,74 @@ This makes the scene function as a game rather than only a graphics demonstratio
 - Night vision post-processing.
 - God rays / screen-space light shafts.
 - Brightness adjustment through settings.
+- Screen-space ambient occlusion / SSAO post-process.
+- Depth-texture based post-processing.
+- Depth of field / focus blur post-process.
+- Weather-driven fog and atmosphere changes.
+- Storm/fog visibility changes connected to gameplay state.
 
----
+## Dock shop and shopkeeper contracts
+
+The dock shop was added to make the economy feel more like a complete gameplay system. Instead of using only direct keyboard shortcuts to sell or upgrade, the player now opens a shop interface at the dock with **E**.
+
+The shop allows the player to:
+
+- view current fish cargo
+- see fish PNGs inside the shop interface
+- sell fish one at a time
+- sell all fish at once
+- buy rod, engine, and cargo upgrades
+- repair hull damage
+- interact using keyboard selection or mouse clicks
+
+Duplicate fish are grouped into stacks, so the shop displays quantities such as `Sardine x2` rather than listing every duplicate as a separate row. This makes the cargo system easier to read and makes the shop feel closer to a real game inventory screen.
+
+The shopkeeper also provides contracts. These contracts request specific fish and reward bonus gold when completed. This gives the player directed goals beyond simply catching random fish and creates a stronger loop:
+
+```text
+Accept/track contract
+↓
+Sail to the correct fishing zone
+↓
+Catch required fish
+↓
+Return to dock
+↓
+Turn in contract for bonus gold
+↓
+Buy upgrades and take on harder objectives
+
+```
+
+## Harbour recovery mission and patrol AI
+
+A harbour recovery side mission was added to give the world a second objective loop alongside fishing and key collection.
+
+The player must collect three scrap repair parts from the world and return them to the dock. The quest HUD shows scrap progress, replacing the previous duplicated key display.
+
+The mission also introduces an AI patrol boat. The patrol uses a simple finite-state system:
+
+```text
+Patrol
+↓
+Chase
+↓
+Return to patrol
+```
+
+## Dynamic weather system
+
+A dynamic weather system was added to make the sea feel less static and to connect atmosphere with gameplay.
+
+The weather can change between:
+
+```text
+Calm
+Fog
+Rain
+Storm
+```
+
 
 ## Rendering pipeline
 
@@ -356,6 +480,40 @@ This affects:
 - shadow direction
 - fog mood
 - post-process god rays
+
+### Screen-space ambient occlusion / SSAO
+
+The post-processing pipeline was extended with a simplified screen-space ambient occlusion mode. The scene depth texture is sampled in the fullscreen fragment shader to approximate local occlusion and darken areas where surfaces are close together.
+
+This improves contact shading around objects such as the dock, boat, scrap, and island geometry. The implementation is not a full reproduction of recent neural or stereo SSAO methods, but it uses the same general screen-space principle: using already-rendered depth information to estimate occlusion efficiently in real time.
+
+Relevant files:
+
+```text
+PostProcess.h
+PostProcess.cpp
+postprocess.frag
+main.cpp
+```
+
+### Depth of field post-processing
+
+A depth of field mode was added to the post-processing pipeline. The shader samples the rendered colour texture and compares each pixel’s depth against a focus distance. Pixels further from the focus range receive stronger blur, while focused areas remain sharper.
+
+This is a simplified real-time game-style depth of field effect rather than a physically accurate camera simulation. It was added because it demonstrates another depth-texture post-process and gives the scene a more cinematic presentation mode.
+
+Relevant files:
+
+```text
+PostProcess.h
+PostProcess.cpp
+postprocess.frag
+main.cpp
+```
+
+
+Tan et al.’s 2022 paper is useful for your references because it discusses real-time depth of field for games and notes that game DoF often uses post-processing approximations. :contentReference[oaicite:2]{index=2}
+
 
 ### God rays / light shafts
 
@@ -536,10 +694,24 @@ The project includes a playable game loop and game design systems:
 - settings menu
 - audio feedback
 - atmospheric zone design
+- Additional gamification and polish added late in development includes:
+- dock shop interface
+- clickable shop UI
+- stacked fish inventory display
+- shopkeeper portrait support
+- fish contract objectives
+- contract side HUD
+- harbour scrap recovery side mission
+- AI patrol boat
+- patrol chase state and horn warning
+- dynamic weather states
+- weather affecting fog, danger, and boat handling
+- scrap progress display in the quest HUD
+
+These additions make the game feel more like a complete prototype because the systems now connect into a clearer loop: catch fish, complete contracts, earn gold, upgrade the boat, survive weather/patrol pressure, and progress toward larger objectives.****
 
 ### 90–100 range: research-style advanced features
 
-The strongest research-style / advanced features are:
 
 ### 1. PCSS soft shadows
 
@@ -592,6 +764,21 @@ The earlier version of the project had a simpler shrine/objective structure. Thi
 - stronger shader integration
 - cleaner code organisation
 
+Later development also expanded the game loop beyond the original fishing/selling structure by adding:
+
+- a proper dock shop instead of only direct upgrade hotkeys
+- fish stacks and clickable shop cards
+- shopkeeper contracts
+- a contract progress HUD
+- a harbour recovery side quest
+- collectable scrap models
+- a patrol boat with chase behaviour
+- chase horn audio feedback
+- a dynamic weather system
+- weather HUD feedback
+- scrap progress in the quest panel
+
+These additions helped the project feel more like a playable game with multiple overlapping objectives rather than a simple scene with isolated features.
 The goal was to make the project feel complete rather than just a small graphics demo.
 
 ---
@@ -633,7 +820,21 @@ The UI includes:
 - settings menu
 - victory screen
 
-The UI is built around a `HUDState` structure so the renderer receives the game state it needs without directly controlling the gameplay systems.
+
+## Update “UI design” with this paragraph
+
+
+The UI was expanded with a dock shop, shopkeeper portrait, contract tracker, weather tracker, and scrap progress display. The shop HUD supports both keyboard and mouse interaction. Fish are displayed with their PNG artwork and stacked into quantities to keep the interface readable when the player has duplicate catches.
+
+The HUD now shows several layers of progression at once:
+
+- main key objective
+- harbour scrap objective
+- shopkeeper contract progress
+- current weather state
+- hull, danger, cargo, and economy information
+
+This makes the game state clearer during play and helps the marker see the gameplay systems working without relying only on console output or window title text.
 
 ---
 
@@ -662,6 +863,11 @@ media/models/tree.mtl
 media/models/treecolorpallet.png
 media/sword.obj
 media/models/sword.obj
+media/models/scrap.obj
+media/models/scrap.png
+media/models/scrap.jpg
+media/ui/shopkeeper.png
+media/sounds/horn.wav
 ```
 
 Important texture/resource folders include:
@@ -799,15 +1005,27 @@ The strongest elements are:
 - settings menu
 - Lost Island objective and victory state
 - improved modular code structure
+- dock shop and shopkeeper interaction
+- clickable/stacked shop inventory
+- contract-based fishing objectives
+- harbour recovery side mission
+- AI patrol/chase pressure
+- dynamic weather affecting gameplay and atmosphere
+- weather and contract side HUDs
+- improved connection between UI, audio, gameplay, and rendering
 
 If I had more time, I would improve:
 
+
 1. save/load persistence
-2. more fish behaviour differences by biome
-3. more audio events tied to in game actions
-4. polished boat/dock collision
-5. cleaner removal of remaining global state
-6. deeper research write-up with direct source references for PCSS and god rays
+2. deeper contract generation with randomised fish orders
+3. patrol alert levels based on cargo value
+4. more fish behaviour differences by biome and weather
+5. more audio events tied to shop, contracts, patrol, and weather
+6. polished boat/dock collision
+7. clearer separation of the newer shop/contract/weather code into dedicated classes
+8. cleaner removal of remaining global state
+9. deeper research write-up with direct source references for PCSS, SSAO, depth of field, and god rays
 
 ## Generative AI use declaration
 
