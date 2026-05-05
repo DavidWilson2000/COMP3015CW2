@@ -47,14 +47,35 @@ vec3 ApplyBlur(vec2 uv)
 
 vec3 ApplyEdge(vec2 uv)
 {
-    vec3 c = texture(sceneTex, uv).rgb;
+    float lum00 = dot(texture(sceneTex, uv + texelSize * vec2(-1.0, -1.0)).rgb, vec3(0.299, 0.587, 0.114));
+    float lum01 = dot(texture(sceneTex, uv + texelSize * vec2( 0.0, -1.0)).rgb, vec3(0.299, 0.587, 0.114));
+    float lum02 = dot(texture(sceneTex, uv + texelSize * vec2( 1.0, -1.0)).rgb, vec3(0.299, 0.587, 0.114));
+
+    float lum10 = dot(texture(sceneTex, uv + texelSize * vec2(-1.0,  0.0)).rgb, vec3(0.299, 0.587, 0.114));
+    float lum12 = dot(texture(sceneTex, uv + texelSize * vec2( 1.0,  0.0)).rgb, vec3(0.299, 0.587, 0.114));
+
+    float lum20 = dot(texture(sceneTex, uv + texelSize * vec2(-1.0,  1.0)).rgb, vec3(0.299, 0.587, 0.114));
+    float lum21 = dot(texture(sceneTex, uv + texelSize * vec2( 0.0,  1.0)).rgb, vec3(0.299, 0.587, 0.114));
+    float lum22 = dot(texture(sceneTex, uv + texelSize * vec2( 1.0,  1.0)).rgb, vec3(0.299, 0.587, 0.114));
+
+    float gx = -lum00 - 2.0 * lum10 - lum20 + lum02 + 2.0 * lum12 + lum22;
+    float gy = -lum00 - 2.0 * lum01 - lum02 + lum20 + 2.0 * lum21 + lum22;
+
+    float colourEdge = length(vec2(gx, gy));
+
     float d0 = texture(depthTex, uv + texelSize * vec2(-1.0,  0.0)).r;
     float d1 = texture(depthTex, uv + texelSize * vec2( 1.0,  0.0)).r;
     float d2 = texture(depthTex, uv + texelSize * vec2( 0.0, -1.0)).r;
     float d3 = texture(depthTex, uv + texelSize * vec2( 0.0,  1.0)).r;
-    float edge = abs(d1 - d0) + abs(d3 - d2);
-    edge = smoothstep(0.0005, 0.006, edge);
-    return mix(c, vec3(0.02, 0.025, 0.03), edge * 0.85);
+
+    float depthEdge = abs(d1 - d0) + abs(d3 - d2);
+
+    float edge = max(
+        smoothstep(0.05, 0.18, colourEdge),
+        smoothstep(0.0003, 0.004, depthEdge)
+    );
+
+    return vec3(edge);
 }
 
 vec3 ApplyNightVision(vec2 uv)
@@ -69,36 +90,39 @@ vec3 ApplyNightVision(vec2 uv)
 vec3 ApplyGodRays(vec2 uv)
 {
     vec3 base = texture(sceneTex, uv).rgb;
-    if (sunVisibility <= 0.001)
-        return base;
 
-    vec2 delta = (uv - sunScreenPos) * 0.035;
+    // Keep a small demo visibility so F11 is visibly different even when the
+    // sun is near the edge of the screen. It still becomes stronger when the
+    // computed sun visibility is high.
+    float visible = max(sunVisibility, 0.28 * dayFactor);
+
+    vec2 rayOrigin = clamp(sunScreenPos, vec2(0.05), vec2(0.95));
+    vec2 delta = (uv - rayOrigin) * 0.030;
     vec2 sampleUv = uv;
     vec3 rays = vec3(0.0);
     float weight = 1.0;
 
-    for (int i = 0; i < 48; ++i)
+    for (int i = 0; i < 64; ++i)
     {
         sampleUv -= delta;
         if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0)
             break;
 
         float depth = texture(depthTex, sampleUv).r;
-        float skyAmount = smoothstep(0.985, 1.0, depth);
+        float skyAmount = smoothstep(0.970, 1.0, depth);
         vec3 sampleColour = texture(sceneTex, sampleUv).rgb;
         rays += sampleColour * skyAmount * weight;
-        weight *= 0.965;
+        weight *= 0.955;
     }
 
-    rays *= 0.018 * sunVisibility * dayFactor;
-    return base + rays * sunColor;
+    rays *= 0.030 * visible;
+    float vignette = smoothstep(0.95, 0.15, length(uv - rayOrigin));
+    return base + rays * sunColor + sunColor * vignette * visible * 0.035;
 }
 
 float SampleDepthAO(vec2 uv)
 {
     float rawDepth = texture(depthTex, uv).r;
-
-    // Skip the skybox/background so the whole sky is not darkened.
     if (rawDepth >= 0.9999)
         return 1.0;
 
@@ -111,8 +135,6 @@ float SampleDepthAO(vec2 uv)
         vec2( 0.5,  1.0), vec2(-0.5,  1.0), vec2( 0.5, -1.0), vec2(-0.5, -1.0)
     );
 
-    // Screen-space radius in pixels. This gives visible contact darkening
-    // around crates, docks, rocks, the boat and shoreline geometry.
     float pixelRadius = 10.0;
     float radius = 1.25;
     float bias = 0.05;
@@ -123,37 +145,29 @@ float SampleDepthAO(vec2 uv)
         float ring = 0.55 + float(i % 4) * 0.25;
         vec2 sampleUv = uv + dirs[i] * texelSize * pixelRadius * ring;
         float sampleRaw = texture(depthTex, sampleUv).r;
-
         if (sampleRaw >= 0.9999)
             continue;
 
         float sampleDepth = LineariseDepth(sampleRaw);
         float depthDifference = centreDepth - sampleDepth;
         float rangeCheck = smoothstep(0.0, 1.0, radius / max(abs(depthDifference), 0.001));
-
         if (depthDifference > bias)
-        {
             occlusion += rangeCheck;
-        }
     }
 
     occlusion /= 16.0;
-    float strength = 1.35;
-    return clamp(1.0 - occlusion * strength, 0.35, 1.0);
+    return clamp(1.0 - occlusion * 1.35, 0.35, 1.0);
 }
 
 vec3 ApplySSAO(vec2 uv)
 {
     vec3 colour = texture(sceneTex, uv).rgb;
     float ao = SampleDepthAO(uv);
-
-    // A tiny blur from neighbouring AO samples reduces harsh noisy speckling.
     ao += SampleDepthAO(uv + texelSize * vec2( 1.5, 0.0));
     ao += SampleDepthAO(uv + texelSize * vec2(-1.5, 0.0));
     ao += SampleDepthAO(uv + texelSize * vec2( 0.0, 1.5));
     ao += SampleDepthAO(uv + texelSize * vec2( 0.0,-1.5));
     ao /= 5.0;
-
     return colour * ao;
 }
 
@@ -183,25 +197,17 @@ vec3 ApplyDepthOfField(vec2 uv)
 {
     vec3 sharp = texture(sceneTex, uv).rgb;
     float rawDepth = texture(depthTex, uv).r;
-
     float depth = LineariseDepth(rawDepth);
 
-    // Circle of confusion approximation. The current values are tuned so the
-    // boat/camera target remains readable while distant scenery and sky soften.
     float focusDistance = max(dofFocusDistance, 0.1);
     float focusRange = max(dofFocusRange, 0.1);
     float coc = saturate(abs(depth - focusDistance) / focusRange);
     coc = smoothstep(0.05, 1.0, coc);
-
-    // Treat the skybox/background as distant and slightly out of focus.
     if (rawDepth >= 0.9999)
         coc = max(coc, 0.72);
 
     float radius = dofMaxBlurPixels * coc;
     vec3 blurred = DepthOfFieldBlur(uv, radius);
-
-    // Blend rather than fully replacing the image so the effect is clear but
-    // still usable during gameplay and demonstration.
     return mix(sharp, blurred, coc * 0.9);
 }
 
@@ -211,29 +217,17 @@ void main()
     vec3 colour = texture(sceneTex, uv).rgb;
 
     if (mode == 1)
-    {
         colour = ApplyEdge(uv);
-    }
     else if (mode == 2)
-    {
         colour = ApplyBlur(uv);
-    }
     else if (mode == 3)
-    {
         colour = ApplyNightVision(uv);
-    }
     else if (mode == 4)
-    {
         colour = ApplyGodRays(uv);
-    }
     else if (mode == 5)
-    {
         colour = ApplySSAO(uv);
-    }
     else if (mode == 6)
-    {
         colour = ApplyDepthOfField(uv);
-    }
 
     FragColor = vec4(colour, 1.0);
 }

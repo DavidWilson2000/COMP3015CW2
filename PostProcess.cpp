@@ -3,21 +3,33 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 namespace
 {
     std::string ReadTextFile(const std::string& path)
     {
-        std::ifstream file(path);
-        if (!file)
+        const std::vector<std::string> candidates = {
+            path,
+            "../" + path,
+            "../../" + path,
+            "../../../" + path
+        };
+
+        for (const std::string& candidate : candidates)
         {
-            std::cerr << "Failed to open shader file: " << path << std::endl;
-            return {};
+            std::ifstream file(candidate);
+            if (file)
+            {
+                std::cout << "Loaded post-process shader: " << candidate << std::endl;
+                std::stringstream ss;
+                ss << file.rdbuf();
+                return ss.str();
+            }
         }
 
-        std::stringstream ss;
-        ss << file.rdbuf();
-        return ss.str();
+        std::cerr << "Failed to open post-process shader file: " << path << std::endl;
+        return {};
     }
 }
 

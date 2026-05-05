@@ -2349,6 +2349,17 @@ int main()
 
         glfwPollEvents();
 
+        // Function-key fallback for post-processing modes. The key callback
+        // also handles these, but polling here makes the demo controls more
+        // reliable if a function-key press is missed by the callback.
+        if (keys[GLFW_KEY_F4]) gPostMode = PostProcessMode::DepthOfField;
+        if (keys[GLFW_KEY_F5]) gPostMode = PostProcessMode::Edge;
+        if (keys[GLFW_KEY_F6]) gPostMode = PostProcessMode::Blur;
+        if (keys[GLFW_KEY_F7]) gPostMode = PostProcessMode::NightVision;
+        if (keys[GLFW_KEY_F8]) gPostMode = PostProcessMode::None;
+        if (keys[GLFW_KEY_F11]) gPostMode = PostProcessMode::GodRays;
+        if (keys[GLFW_KEY_F12]) gPostMode = PostProcessMode::SSAO;
+
         // One-shot menu input handling. These flags prevent a single
         // key press from toggling menus multiple times across frames.
         if (keys[GLFW_KEY_ENTER] && !startPressed)
