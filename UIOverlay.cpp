@@ -647,9 +647,9 @@ void RenderUIOverlay(const HUDState& state)
     {
         const std::string title = "DREDGE STYLE FISHING PROTOTYPE";
         std::vector<std::pair<std::string, glm::vec4>> lines = {
-            {"FIND 3 KEYS AND REACH THE LOST ISLAND", text},
-            {"WASD SAIL   E FISH / DOCK SHOP   M TOGGLE MINIGAME", text},
-            {"O SETTINGS   P CONTROLS", text},
+            {"FIND 3 KEYS, COMPLETE CONTRACTS, AND REACH THE LOST ISLAND", text},
+            {"WASD SAIL   E FISH / DOCK SHOP   Q SCRAP   T CONTRACTS", text},
+            {"M MINIGAME   P HELP   O SETTINGS", text},
             {"PRESS ENTER TO START", good}
         };
         DrawOverlayLines(verts, sw, sh, title, lines, glm::vec4(0.02f, 0.05f, 0.09f, 0.92f), accent, 4.0f, 3.0f);
@@ -659,13 +659,20 @@ void RenderUIOverlay(const HUDState& state)
     {
         const std::string title = "PAUSED / HELP";
         std::vector<std::pair<std::string, glm::vec4>> lines = {
-            {"WASD MOVE   E FISH / SHOP   SPACE HOOK   M MINIGAME", text},
-            {"AT DOCK: E SHOP   ARROWS/CLICK SELECT   ENTER BUY/SELL", text},
-            {"J JOURNAL   P CLOSE HELP   F5-F8 POST FX", text},
-              {"O SETTINGS  F9-F11 SHADERS", text},
+            {"SAILING: W/S FORWARD/BACK   A/D STEER   C CAMERA   ESC QUIT", text},
+            {"FREE LOOK: ARROWS LOOK AROUND WHEN CAMERA MODE IS FREELOOK", text},
+            {"FISHING: E CAST AWAY FROM DOCK   M MINIGAME ON/OFF   SPACE HOOK", text},
+            {"DOCK SHOP: E OPEN/CLOSE   MOUSE CLICK OR ARROWS SELECT   ENTER BUY/SELL", text},
+            {"CONTRACTS: T TURN IN READY SHOPKEEPER CONTRACTS", text},
+            {"HARBOUR: Q COLLECT/DELIVER SCRAP   H RESET SIDE MISSION", text},
+            {"MENUS: J JOURNAL   O SETTINGS   P CLOSE HELP", text},
+            {"POST FX: F4 DOF   F5 EDGE   F6 BLUR   F7 NIGHT VISION   F8 NORMAL", text},
+            {"RENDERING: F9 PCF/PCSS   F10 SUN CYCLE   F11 GOD RAYS   F12 SSAO", text},
+            {"HUD: WEATHER, SHOP CONTRACTS, SCRAP COUNT, PATROL WARNINGS", accent},
+            {"DEBUG: G TEST GOLD / PROGRESSION HELPER", warn},
             {"PRESS P TO RESUME", good}
         };
-        DrawOverlayLines(verts, sw, sh, title, lines, glm::vec4(0.02f, 0.05f, 0.09f, 0.92f), outline, 4.0f, 3.0f);
+        DrawOverlayLines(verts, sw, sh, title, lines, glm::vec4(0.02f, 0.05f, 0.09f, 0.94f), outline, 3.4f, 1.95f);
     }
 
     if (state.showJournal)

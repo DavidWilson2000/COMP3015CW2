@@ -30,6 +30,11 @@
 #include "RenderTypes.h"
 #include "WorldRenderer.h"
 #include "HarbourMission.h"
+#include "ResourceUtils.h"
+#include "GeometrySetup.h"
+#include "ParticleEffects.h"
+#include "GameTypes.h"
+#include "WeatherSystem.h"
 
 
 
@@ -94,180 +99,10 @@ bool shopMousePressed = false;
 bool shopClosePressed = false;
 bool contractTurnInPressed = false;
 
-struct FishData
-{
-    std::string name;
-    int rarity; // 0 common, 1 uncommon, 2 rare, 3 legendary
-    int value;
-};
-
-struct FishZone
-{
-    glm::vec3 center;
-    float radius;
-    std::vector<FishData> fishPool;
-    glm::vec3 tint;
-    glm::vec3 fogColor;
-    float fogNear;
-    float fogFar;
-    float danger;
-    std::string zoneName;
-
-    bool contains(const glm::vec3& pos) const
-    {
-        return glm::length(glm::vec2(pos.x - center.x, pos.z - center.z)) <= radius;
-    }
-};
-
-struct CargoItem
-{
-    FishData fish;
-};
-
-enum class DockShopAction
-{
-    SellAll = 0,
-    UpgradeRod,
-    UpgradeEngine,
-    UpgradeCargo,
-    RepairHull
-};
-
-const int DOCK_SHOP_ACTION_COUNT = 5;
-
-struct Boat
-{
-    glm::vec3 position = glm::vec3(0.0f, 0.18f, 0.0f);
-    float rotationY = 0.0f;
-    float velocity = 0.0f;
-    float maxForwardSpeed = 7.0f;
-    float maxBackwardSpeed = 3.5f;
-    float acceleration = 4.5f;
-    float deceleration = 3.0f;
-    float turnSpeed = 85.0f;
-
-    void update(float dt)
-    {
-        if (keys[GLFW_KEY_W])
-        {
-            velocity += acceleration * dt;
-            if (velocity > maxForwardSpeed) velocity = maxForwardSpeed;
-        }
-        else if (keys[GLFW_KEY_S])
-        {
-            velocity -= acceleration * dt;
-            if (velocity < -maxBackwardSpeed) velocity = -maxBackwardSpeed;
-        }
-        else
-        {
-            if (velocity > 0.0f)
-            {
-                velocity -= deceleration * dt;
-                if (velocity < 0.0f) velocity = 0.0f;
-            }
-            else if (velocity < 0.0f)
-            {
-                velocity += deceleration * dt;
-                if (velocity > 0.0f) velocity = 0.0f;
-            }
-        }
-
-        float turnAmount = 0.0f;
-        if (keys[GLFW_KEY_A]) turnAmount += 1.0f;
-        if (keys[GLFW_KEY_D]) turnAmount -= 1.0f;
-
-        float speedFactor = glm::clamp(std::abs(velocity) / std::max(maxForwardSpeed, 0.01f), 0.2f, 1.0f);
-        rotationY += turnAmount * turnSpeed * speedFactor * dt;
-
-        float radians = glm::radians(rotationY);
-        glm::vec3 forward(std::sin(radians), 0.0f, std::cos(radians));
-        position += forward * velocity * dt;
-
-        float limit = 56.0f;
-        position.x = glm::clamp(position.x, -limit, limit);
-        position.z = glm::clamp(position.z, -limit, limit);
-    }
-};
-
-float getWaterHeight(float x, float z, float time)
-{
-    float y = 0.0f;
-    y += std::sin(x * 0.30f + time * 1.35f) * 0.05f;
-    y += std::cos(z * 0.22f + time * 1.10f) * 0.04f;
-    y += std::sin((x + z) * 0.12f + time * 0.80f) * 0.03f;
-    return y;
-}
-float clampf(float v, float lo, float hi)
-{
-    if (v < lo) return lo;
-    if (v > hi) return hi;
-    return v;
-}
-
-float saturatef(float v)
-{
-    return clampf(v, 0.0f, 1.0f);
-}
-
-struct SunState
-{
-    glm::vec3 direction = glm::normalize(glm::vec3(0.35f, 0.82f, 0.20f));
-    glm::vec3 color = glm::vec3(1.0f, 0.96f, 0.90f);
-    float dayFactor = 1.0f;
-    float intensity = 1.0f;
-    float ambient = 0.42f;
-};
-
-enum class ShadowFilterMode
-{
-    PCF = 0,
-    PCSS = 1
-};
-
-enum class CameraMode
-{
-    Follow = 0,
-    FreeLook = 1
-};
-
-struct Particle
-{
-    glm::vec3 position{0.0f};
-    glm::vec3 velocity{0.0f};
-    glm::vec4 color{1.0f};
-    float life = 0.0f;
-    float size = 6.0f;
-};
-
-struct ParticleVertex
-{
-    glm::vec3 position;
-    glm::vec4 color;
-    float size;
-};
-
 Boat boat;
 std::vector<FishZone> zones;
 std::vector<CargoItem> cargo;
 std::vector<Particle> particles(MAX_PARTICLES);
-
-struct FishIconTexture
-{
-    GLuint texture = 0;
-    int width = 0;
-    int height = 0;
-    bool attempted = false;
-    bool found = false;
-};
-
-struct FishJournalEntry
-{
-    FishData baseFish;
-    bool discovered = false;
-    int caughtCount = 0;
-    int bestValue = 0;
-    int highestRarityCaught = 0;
-};
 
 std::unordered_map<std::string, FishIconTexture> gFishIconTextures;
 std::unordered_map<std::string, FishJournalEntry> gFishJournal;
@@ -291,37 +126,13 @@ bool gDockShopOpen = false;
 int gDockShopSelection = 0;
 int gJournalPage = 0;
 
-enum class WeatherType
-{
-    Calm = 0,
-    Fog,
-    Rain,
-    Storm
-};
-
-struct WeatherRuntimeState
-{
-    WeatherType type = WeatherType::Calm;
-    float timer = 0.0f;
-    float duration = 40.0f;
-    float intensity = 0.0f;
-};
-
-struct ShopkeeperContract
-{
-    std::string fishName;
-    int quantity = 1;
-    int reward = 0;
-    bool completed = false;
-};
-
-WeatherRuntimeState gWeather;
 std::vector<ShopkeeperContract> gShopkeeperContracts;
 
+
+
 void setCatchMessage(GLFWwindow* window, const std::string& message, float timer);
-void spawnSplash(const glm::vec3& pos, const glm::vec4& color, int count);
+void SpawnSplash(std::vector<Particle>& particles, const glm::vec3& pos, const glm::vec4& color, int count);
 void InitialiseShopkeeperContracts();
-void UpdateWeather(float dt, GLFWwindow* window);
 float gSessionPlayTime = 0.0f;
 int gTotalFishCaught = 0;
 int gTotalGoldEarned = 0;
@@ -341,15 +152,6 @@ float hullWarningTimer = 0.0f;
 float engineStutterTimer = 0.0f;
 bool gWinCelebrationTriggered = false;
 std::string lastCatchText = "No fish caught yet";
-
-struct EnvironmentBlendState
-{
-    glm::vec3 waterTint = glm::vec3(0.0f, 0.10f, 0.16f);
-    glm::vec3 fogColor = glm::vec3(0.70f, 0.82f, 0.94f);
-    float fogNear = 18.0f;
-    float fogFar = 72.0f;
-    float danger = 0.1f;
-};
 
 EnvironmentBlendState gEnvironmentBlend;
 FishingMinigame gFishingMinigame;
@@ -478,167 +280,6 @@ float skyboxVertices[] = {
 };
 
 
-// Resource loading helpers.
-// These helpers make the packaged build more robust by trying the
-// requested path first, then a few parent-folder fallbacks. This is
-// useful when the game is launched from Visual Studio or directly
-// from the x64/Debug folder.
-
-
-bool rawFileExists(const std::string& path)
-{
-    std::ifstream file(path, std::ios::binary);
-    return file.good();
-}
-
-std::vector<std::string> makeResourcePathCandidates(const std::string& path)
-{
-    return {
-        path,
-        "../" + path,
-        "../../" + path,
-        "../../../" + path
-    };
-}
-
-bool resolveResourcePath(
-    const std::string& requestedPath,
-    std::string& resolvedPath,
-    const std::string& label,
-    bool logSuccess = true,
-    bool logFailure = true)
-{
-    const std::vector<std::string> candidates = makeResourcePathCandidates(requestedPath);
-
-    for (const std::string& candidate : candidates)
-    {
-        if (rawFileExists(candidate))
-        {
-            resolvedPath = candidate;
-
-            if (logSuccess)
-            {
-                if (candidate == requestedPath)
-                {
-                    std::cout << "[Resource] Loaded " << label << ": " << candidate << std::endl;
-                }
-                else
-                {
-                    std::cout << "[Resource fallback] Loaded " << label
-                              << ": " << candidate
-                              << " (requested: " << requestedPath << ")"
-                              << std::endl;
-                }
-            }
-
-            return true;
-        }
-    }
-
-    if (logFailure)
-    {
-        std::cerr << "[Resource missing] Could not find " << label
-                  << ": " << requestedPath << std::endl;
-
-        std::cerr << "Tried:" << std::endl;
-        for (const std::string& candidate : candidates)
-        {
-            std::cerr << "  - " << candidate << std::endl;
-        }
-    }
-
-    return false;
-}
-
-std::string readTextFile(const std::string& path)
-{
-    std::string resolvedPath;
-    if (!resolveResourcePath(path, resolvedPath, "text/shader file"))
-    {
-        return "";
-    }
-
-    std::ifstream file(resolvedPath);
-    if (!file)
-    {
-        std::cerr << "Failed to open resolved file: " << resolvedPath << std::endl;
-        return "";
-    }
-
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-
-    std::cout << "[Shader/Text] Read " << resolvedPath
-              << " (" << buffer.str().size() << " bytes)" << std::endl;
-
-    return buffer.str();
-}
-
-// Compiles one GLSL shader stage and prints compiler errors to the
-// console. Keeping these logs visible makes shader issues easier to
-// diagnose during marking and video demonstration.
-GLuint compileShader(GLenum type, const std::string& src)
-{
-    GLuint shader = glCreateShader(type);
-    const char* csrc = src.c_str();
-    glShaderSource(shader, 1, &csrc, nullptr);
-    glCompileShader(shader);
-
-    GLint success = 0;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success)
-    {
-        char infoLog[2048];
-        glGetShaderInfoLog(shader, 2048, nullptr, infoLog);
-        std::cerr << "Shader compile error:\n" << infoLog << std::endl;
-    }
-    return shader;
-}
-
-// Builds a complete shader program from vertex/fragment shader files.
-// The debug logs show exactly which shader pair was loaded and linked.
-GLuint createShaderProgramFromFiles(const std::string& vertPath, const std::string& fragPath)
-{
-    std::cout << "[Shader] Creating program from: "
-              << vertPath << " + " << fragPath << std::endl;
-
-    std::string vertSrc = readTextFile(vertPath);
-    std::string fragSrc = readTextFile(fragPath);
-
-    if (vertSrc.empty() || fragSrc.empty())
-    {
-        std::cerr << "[Shader] Missing shader source. Program may fail: "
-                  << vertPath << " + " << fragPath << std::endl;
-    }
-
-    GLuint vs = compileShader(GL_VERTEX_SHADER, vertSrc);
-    GLuint fs = compileShader(GL_FRAGMENT_SHADER, fragSrc);
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vs);
-    glAttachShader(program, fs);
-    glLinkProgram(program);
-
-    GLint success = 0;
-    glGetProgramiv(program, GL_LINK_STATUS, &success);
-    if (!success)
-    {
-        char infoLog[2048];
-        glGetProgramInfoLog(program, 2048, nullptr, infoLog);
-        std::cerr << "Program link error for "
-                  << vertPath << " + " << fragPath
-                  << ":\n" << infoLog << std::endl;
-    }
-    else
-    {
-        std::cout << "[Shader] Linked program successfully: "
-                  << vertPath << " + " << fragPath << std::endl;
-    }
-
-    glDeleteShader(vs);
-    glDeleteShader(fs);
-    return program;
-}
-
 void framebuffer_size_callback(GLFWwindow*, int width, int height)
 {
     gWindowWidth = width;
@@ -671,266 +312,6 @@ void key_callback(GLFWwindow* window, int key, int, int action, int)
     }
 }
 
-
-void setupCube()
-{
-    glGenVertexArrays(1, &cubeVAO);
-    glGenBuffers(1, &cubeVBO);
-    glBindVertexArray(cubeVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, cubeVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-    glEnableVertexAttribArray(2);
-    glBindVertexArray(0);
-}
-
-void setupPlane()
-{
-    glGenVertexArrays(1, &planeVAO);
-    glGenBuffers(1, &planeVBO);
-    glBindVertexArray(planeVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, planeVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(planeVertices), planeVertices, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-    glEnableVertexAttribArray(2);
-    glBindVertexArray(0);
-}
-
-void setupSkybox()
-{
-    glGenVertexArrays(1, &skyboxVAO);
-    glGenBuffers(1, &skyboxVBO);
-    glBindVertexArray(skyboxVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, skyboxVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), skyboxVertices, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    glBindVertexArray(0);
-}
-
-void setupParticles()
-{
-    glGenVertexArrays(1, &particleVAO);
-    glGenBuffers(1, &particleVBO);
-    glBindVertexArray(particleVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, particleVBO);
-    glBufferData(GL_ARRAY_BUFFER, MAX_PARTICLES * sizeof(ParticleVertex), nullptr, GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(ParticleVertex), (void*)offsetof(ParticleVertex, position));
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(ParticleVertex), (void*)offsetof(ParticleVertex, color));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(ParticleVertex), (void*)offsetof(ParticleVertex, size));
-    glEnableVertexAttribArray(2);
-    glBindVertexArray(0);
-}
-
-void setMat4(GLuint shader, const char* name, const glm::mat4& mat)
-{
-    glUniformMatrix4fv(glGetUniformLocation(shader, name), 1, GL_FALSE, glm::value_ptr(mat));
-}
-
-void setVec3(GLuint shader, const char* name, const glm::vec3& vec)
-{
-    glUniform3fv(glGetUniformLocation(shader, name), 1, glm::value_ptr(vec));
-}
-
-void setVec4(GLuint shader, const char* name, const glm::vec4& vec)
-{
-    glUniform4fv(glGetUniformLocation(shader, name), 1, glm::value_ptr(vec));
-}
-
-void setFloat(GLuint shader, const char* name, float value)
-{
-    glUniform1f(glGetUniformLocation(shader, name), value);
-}
-
-void setInt(GLuint shader, const char* name, int value)
-{
-    glUniform1i(glGetUniformLocation(shader, name), value);
-}
-
-// Loads an OBJ model into an OpenGL VAO/VBO using the module-compatible
-// SimpleOBJ loader. The fallback resolver allows models to be found
-// from the packaged build folder as well as from source-run paths.
-bool loadOBJModel(const std::string& path, ModelMesh& outModel)
-{
-    std::string resolvedPath;
-    if (!resolveResourcePath(path, resolvedPath, "OBJ model"))
-    {
-        return false;
-    }
-
-    std::vector<float> vertices;
-    std::string warning;
-    std::string error;
-
-    if (!SimpleOBJ::loadOBJInterleaved(resolvedPath, vertices, &warning, &error))
-    {
-        if (!warning.empty()) std::cout << "OBJ warning: " << warning << std::endl;
-        if (!error.empty()) std::cerr << "OBJ error: " << error << std::endl;
-
-        std::cerr << "[OBJ] Failed to load model: " << resolvedPath
-                  << " (requested: " << path << ")" << std::endl;
-
-        return false;
-    }
-
-    if (!warning.empty())
-        std::cout << "OBJ warning: " << warning << std::endl;
-
-    // Calculate model bounds from the interleaved vertex data.
-    // WorldRenderer.cpp uses these bounds to auto-scale and ground imported
-    // models such as tree.obj. Without this, min/max stay at 0 and trees can
-    // appear missing, huge, or incorrectly placed.
-    glm::vec3 minBounds(std::numeric_limits<float>::max());
-    glm::vec3 maxBounds(-std::numeric_limits<float>::max());
-
-    for (size_t i = 0; i + 7 < vertices.size(); i += 8)
-    {
-        glm::vec3 p(vertices[i + 0], vertices[i + 1], vertices[i + 2]);
-        minBounds = glm::min(minBounds, p);
-        maxBounds = glm::max(maxBounds, p);
-    }
-
-    outModel.minBounds = minBounds;
-    outModel.maxBounds = maxBounds;
-
-    glGenVertexArrays(1, &outModel.vao);
-    glGenBuffers(1, &outModel.vbo);
-
-    glBindVertexArray(outModel.vao);
-    glBindBuffer(GL_ARRAY_BUFFER, outModel.vbo);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-    glEnableVertexAttribArray(2);
-
-    glBindVertexArray(0);
-
-    outModel.vertexCount = vertices.size() / 8;
-    outModel.loaded = true;
-
-    std::cout << "[OBJ] Loaded model: " << resolvedPath
-              << " | vertices: " << outModel.vertexCount
-              << " | bounds min(" << outModel.minBounds.x << ", "
-              << outModel.minBounds.y << ", " << outModel.minBounds.z << ")"
-              << " max(" << outModel.maxBounds.x << ", "
-              << outModel.maxBounds.y << ", " << outModel.maxBounds.z << ")"
-              << std::endl;
-
-    return true;
-}
-
-// Creates a GL texture from raw RGB data. This is used by the
-// procedural fallback textures when image files are missing.
-GLuint createTextureFromRGBData(const std::vector<unsigned char>& data, int width, int height)
-{
-    GLuint tex = 0;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data.data());
-    glGenerateMipmap(GL_TEXTURE_2D);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    return tex;
-}
-
-GLuint createSolidColorTexture(unsigned char r, unsigned char g, unsigned char b)
-{
-    const int w = 4;
-    const int h = 4;
-    std::vector<unsigned char> data(w * h * 3);
-
-    for (int i = 0; i < w * h; ++i)
-    {
-        data[i * 3 + 0] = r;
-        data[i * 3 + 1] = g;
-        data[i * 3 + 2] = b;
-    }
-
-    return createTextureFromRGBData(data, w, h);
-}
-
-// Loads a texture from disk with fallback path resolution. If this
-// returns 0, the caller can use one of the procedural texture fallbacks.
-GLuint loadTextureFromFile(const std::string& path, bool flipVertically = true)
-{
-    std::string resolvedPath;
-    if (!resolveResourcePath(path, resolvedPath, "texture"))
-    {
-        return 0;
-    }
-
-    if (flipVertically)
-    {
-        stbi_set_flip_vertically_on_load(true);
-    }
-    else
-    {
-        stbi_set_flip_vertically_on_load(false);
-    }
-
-    int width = 0;
-    int height = 0;
-    int channels = 0;
-    unsigned char* data = stbi_load(resolvedPath.c_str(), &width, &height, &channels, 0);
-
-    if (!data)
-    {
-        std::cerr << "[Texture] Failed to load resolved texture: " << resolvedPath
-                  << " (requested: " << path << ")" << std::endl;
-        return 0;
-    }
-
-    GLenum format = GL_RGB;
-    if (channels == 1) format = GL_RED;
-    else if (channels == 3) format = GL_RGB;
-    else if (channels == 4) format = GL_RGBA;
-
-    GLuint tex = 0;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-
-    glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
-    glGenerateMipmap(GL_TEXTURE_2D);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    stbi_image_free(data);
-
-    std::cout << "[Texture] Loaded: " << resolvedPath
-              << " (" << width << "x" << height
-              << ", channels: " << channels << ")" << std::endl;
-
-    return tex;
-}
-
-
-// Lightweight wrapper used by asset lookups such as fish PNG loading.
-bool fileExists(const std::string& path)
-{
-    std::string resolvedPath;
-    return resolveResourcePath(path, resolvedPath, "file", false, false);
-}
 
 std::string makeFishTextureStem(const std::string& fishName)
 {
@@ -1166,194 +547,6 @@ std::vector<HUDJournalEntry> BuildJournalPageEntries(int page)
     return entries;
 }
 
-GLuint createWoodTexture()
-{
-    const int w = 128, h = 128;
-    std::vector<unsigned char> data(w * h * 3);
-    for (int y = 0; y < h; ++y)
-    {
-        for (int x = 0; x < w; ++x)
-        {
-            float xf = static_cast<float>(x) / static_cast<float>(w);
-            float yf = static_cast<float>(y) / static_cast<float>(h);
-
-            float warp = std::sin(yf * 24.0f + xf * 5.0f) * 0.08f + std::cos(yf * 11.0f) * 0.05f;
-            float grain = std::sin((xf + warp) * 54.0f) * 0.5f + 0.5f;
-            float fine = std::sin((xf + yf * 0.18f) * 140.0f) * 0.5f + 0.5f;
-
-            float knotDx = xf - 0.32f;
-            float knotDy = yf - 0.58f;
-            float knotDist = std::sqrt(knotDx * knotDx * 4.0f + knotDy * knotDy);
-            float knot = std::sin(knotDist * 120.0f + yf * 12.0f) * 0.5f + 0.5f;
-            knot *= std::exp(-knotDist * 9.0f);
-
-            float shade = 0.55f + grain * 0.35f + fine * 0.07f + knot * 0.25f;
-
-            int i = (y * w + x) * 3;
-            data[i + 0] = static_cast<unsigned char>(clampf(58.0f + shade * 82.0f, 0.0f, 255.0f));
-            data[i + 1] = static_cast<unsigned char>(clampf(32.0f + shade * 52.0f, 0.0f, 255.0f));
-            data[i + 2] = static_cast<unsigned char>(clampf(18.0f + shade * 28.0f, 0.0f, 255.0f));
-        }
-    }
-    return createTextureFromRGBData(data, w, h);
-}
-
-GLuint createRockTexture()
-{
-    const int w = 64, h = 64;
-    std::vector<unsigned char> data(w * h * 3);
-    for (int y = 0; y < h; ++y)
-    {
-        for (int x = 0; x < w; ++x)
-        {
-            float noise = std::sin(x * 0.51f + y * 0.37f) * std::cos(y * 0.23f) * 0.5f + 0.5f;
-            float crack = (std::sin((x - y) * 0.25f) > 0.8f) ? 0.55f : 0.0f;
-            int c = static_cast<int>(85 + noise * 70 - crack * 40);
-            int i = (y * w + x) * 3;
-            data[i + 0] = static_cast<unsigned char>(clampf(c, 0, 255));
-            data[i + 1] = static_cast<unsigned char>(clampf(c + 5, 0, 255));
-            data[i + 2] = static_cast<unsigned char>(clampf(c + 10, 0, 255));
-        }
-    }
-    return createTextureFromRGBData(data, w, h);
-}
-
-GLuint createGrassTexture()
-{
-    const int w = 64, h = 64;
-    std::vector<unsigned char> data(w * h * 3);
-    for (int y = 0; y < h; ++y)
-    {
-        for (int x = 0; x < w; ++x)
-        {
-            float stripe = std::sin(x * 0.55f) * 0.5f + 0.5f;
-            float noise = std::cos((x + y) * 0.27f) * 0.5f + 0.5f;
-            int i = (y * w + x) * 3;
-            data[i + 0] = static_cast<unsigned char>(30 + stripe * 25);
-            data[i + 1] = static_cast<unsigned char>(100 + noise * 90);
-            data[i + 2] = static_cast<unsigned char>(35 + stripe * 20);
-        }
-    }
-    return createTextureFromRGBData(data, w, h);
-}
-
-GLuint createBoatTexture()
-{
-    const int w = 64, h = 64;
-    std::vector<unsigned char> data(w * h * 3);
-    for (int y = 0; y < h; ++y)
-    {
-        for (int x = 0; x < w; ++x)
-        {
-            bool line = (x % 16 == 0) || (y % 16 == 0);
-            int i = (y * w + x) * 3;
-            data[i + 0] = static_cast<unsigned char>(140 + (line ? 18 : 0));
-            data[i + 1] = static_cast<unsigned char>(32 + (line ? 10 : 0));
-            data[i + 2] = static_cast<unsigned char>(28 + (line ? 10 : 0));
-        }
-    }
-    return createTextureFromRGBData(data, w, h);
-}
-
-// Distinct patrol-boat texture used on the same imported boat mesh as the
-// player boat. This keeps the patrol visually consistent with the world while
-// making it readable as a separate AI/enemy object.
-GLuint createPatrolBoatTexture()
-{
-    const int w = 64, h = 64;
-    std::vector<unsigned char> data(w * h * 3);
-
-    for (int y = 0; y < h; ++y)
-    {
-        for (int x = 0; x < w; ++x)
-        {
-            const bool panelLine = (x % 16 == 0) || (y % 16 == 0);
-            const bool warningStripe = ((x + y) / 10) % 2 == 0;
-            const int i = (y * w + x) * 3;
-
-            // Dark blue/teal base with a subtle yellow safety-stripe pattern.
-            data[i + 0] = static_cast<unsigned char>(24  + (panelLine ? 20 : 0) + (warningStripe ? 18 : 0));
-            data[i + 1] = static_cast<unsigned char>(82  + (panelLine ? 24 : 0) + (warningStripe ? 30 : 0));
-            data[i + 2] = static_cast<unsigned char>(116 + (panelLine ? 25 : 0));
-        }
-    }
-
-    return createTextureFromRGBData(data, w, h);
-}
-
-
-// Rusty/metallic-looking fallback texture for the harbour mission scrap model.
-// This is used if no scrap texture image is provided in media/models/.
-GLuint createScrapTexture()
-{
-    const int w = 64, h = 64;
-    std::vector<unsigned char> data(w * h * 3);
-
-    for (int y = 0; y < h; ++y)
-    {
-        for (int x = 0; x < w; ++x)
-        {
-            const float noise = std::sin(x * 0.73f + y * 0.41f) * 0.5f + 0.5f;
-            const bool seam = (x % 17 == 0) || (y % 23 == 0);
-            const bool rustPatch = std::sin(x * 0.31f + y * 0.67f) > 0.55f;
-            const int i = (y * w + x) * 3;
-
-            // Cool grey metal with orange-brown rust patches.
-            data[i + 0] = static_cast<unsigned char>(clampf((rustPatch ? 120.0f : 82.0f) + noise * 35.0f + (seam ? 25.0f : 0.0f), 0.0f, 255.0f));
-            data[i + 1] = static_cast<unsigned char>(clampf((rustPatch ? 68.0f  : 82.0f) + noise * 24.0f + (seam ? 16.0f : 0.0f), 0.0f, 255.0f));
-            data[i + 2] = static_cast<unsigned char>(clampf((rustPatch ? 30.0f  : 86.0f) + noise * 18.0f + (seam ? 12.0f : 0.0f), 0.0f, 255.0f));
-        }
-    }
-
-    return createTextureFromRGBData(data, w, h);
-}
-
-GLuint createBuoyTexture()
-{
-    const int w = 32, h = 32;
-    std::vector<unsigned char> data(w * h * 3);
-    for (int y = 0; y < h; ++y)
-    {
-        for (int x = 0; x < w; ++x)
-        {
-            bool stripe = ((x / 8) % 2) == 0;
-            int i = (y * w + x) * 3;
-            data[i + 0] = stripe ? 210 : 230;
-            data[i + 1] = stripe ? 80 : 190;
-            data[i + 2] = stripe ? 50 : 60;
-        }
-    }
-    return createTextureFromRGBData(data, w, h);
-}
-
-GLuint createFallbackCubemap()
-{
-    GLuint tex = 0;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
-
-    const unsigned char faces[6][3] = {
-        {118, 164, 214}, // right
-        {110, 156, 206}, // left
-        {76,  112, 170}, // top
-        {150, 170, 190}, // bottom
-        {124, 170, 220}, // front
-        {110, 150, 200}  // back
-    };
-
-    for (unsigned int i = 0; i < 6; ++i)
-    {
-        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, faces[i]);
-    }
-
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    return tex;
-}
-
 void setupShadowMap()
 {
     glGenFramebuffers(1, &shadowFBO);
@@ -1503,121 +696,6 @@ float getZoneFogFar()
     return gEnvironmentBlend.fogFar;
 }
 
-
-const char* GetWeatherName()
-{
-    switch (gWeather.type)
-    {
-    case WeatherType::Fog: return "FOG";
-    case WeatherType::Rain: return "RAIN";
-    case WeatherType::Storm: return "STORM";
-    default: return "CALM";
-    }
-}
-
-std::string GetWeatherEffectText()
-{
-    switch (gWeather.type)
-    {
-    case WeatherType::Fog: return "LOW VISIBILITY";
-    case WeatherType::Rain: return "SLIPPERY WATER";
-    case WeatherType::Storm: return "ROUGH WATER DANGER";
-    default: return "CLEAR SAILING";
-    }
-}
-
-float GetWeatherEffect01()
-{
-    return gWeather.intensity;
-}
-
-glm::vec3 GetWeatherTint()
-{
-    switch (gWeather.type)
-    {
-    case WeatherType::Fog: return glm::vec3(0.72f, 0.76f, 0.78f);
-    case WeatherType::Rain: return glm::vec3(0.42f, 0.48f, 0.56f);
-    case WeatherType::Storm: return glm::vec3(0.18f, 0.22f, 0.30f);
-    default: return glm::vec3(0.70f, 0.82f, 0.94f);
-    }
-}
-
-float GetWeatherFogNearMultiplier()
-{
-    switch (gWeather.type)
-    {
-    case WeatherType::Fog: return glm::mix(1.0f, 0.42f, gWeather.intensity);
-    case WeatherType::Rain: return glm::mix(1.0f, 0.75f, gWeather.intensity);
-    case WeatherType::Storm: return glm::mix(1.0f, 0.55f, gWeather.intensity);
-    default: return 1.0f;
-    }
-}
-
-float GetWeatherFogFarMultiplier()
-{
-    switch (gWeather.type)
-    {
-    case WeatherType::Fog: return glm::mix(1.0f, 0.48f, gWeather.intensity);
-    case WeatherType::Rain: return glm::mix(1.0f, 0.72f, gWeather.intensity);
-    case WeatherType::Storm: return glm::mix(1.0f, 0.50f, gWeather.intensity);
-    default: return 1.0f;
-    }
-}
-
-float GetWeatherDangerBonus()
-{
-    switch (gWeather.type)
-    {
-    case WeatherType::Rain: return 0.10f * gWeather.intensity;
-    case WeatherType::Storm: return 0.30f * gWeather.intensity;
-    default: return 0.0f;
-    }
-}
-
-float GetWeatherSpeedMultiplier()
-{
-    switch (gWeather.type)
-    {
-    case WeatherType::Rain: return glm::mix(1.0f, 0.92f, gWeather.intensity);
-    case WeatherType::Storm: return glm::mix(1.0f, 0.78f, gWeather.intensity);
-    default: return 1.0f;
-    }
-}
-
-void SetNextWeather(GLFWwindow* window)
-{
-    const int roll = rand() % 100;
-    WeatherType next = WeatherType::Calm;
-    if (roll < 30) next = WeatherType::Calm;
-    else if (roll < 55) next = WeatherType::Fog;
-    else if (roll < 80) next = WeatherType::Rain;
-    else next = WeatherType::Storm;
-
-    gWeather.type = next;
-    gWeather.duration = 42.0f + static_cast<float>(rand() % 34);
-    gWeather.timer = gWeather.duration;
-    gWeather.intensity = 0.0f;
-
-    if (window && next != WeatherType::Calm)
-    {
-        setCatchMessage(window, std::string("Weather changing: ") + GetWeatherName(), 2.0f);
-        TriggerCatchBanner(std::string("WEATHER: ") + GetWeatherName(), 1.1f, next == WeatherType::Storm ? 0.5f : 0.0f);
-    }
-}
-
-void UpdateWeather(float dt, GLFWwindow* window)
-{
-    gWeather.timer -= dt;
-    if (gWeather.timer <= 0.0f)
-    {
-        SetNextWeather(window);
-    }
-
-    const float elapsed = std::max(0.0f, gWeather.duration - gWeather.timer);
-    const float fadeIn = clampf(elapsed / 8.0f, 0.0f, 1.0f);
-    const float fadeOut = clampf(gWeather.timer / 8.0f, 0.0f, 1.0f);
-    gWeather.intensity = (gWeather.type == WeatherType::Calm) ? 0.0f : std::min(fadeIn, fadeOut);
-}
 
 float getWorldDanger()
 {
@@ -2103,7 +1181,7 @@ void TurnInReadyContracts(GLFWwindow* window)
         lastCatchText = "Completed " + std::to_string(completedNow) + " contract(s) for " + std::to_string(rewardTotal) + "g";
         catchMessageTimer = 2.8f;
         TriggerCatchBanner("CONTRACT COMPLETE", 1.3f);
-        spawnSplash(glm::vec3(0.0f, 0.35f, 1.2f), glm::vec4(1.0f, 0.86f, 0.35f, 1.0f), 22);
+        SpawnSplash(particles, glm::vec3(0.0f, 0.35f, 1.2f), glm::vec4(1.0f, 0.86f, 0.35f, 1.0f), 22);
     }
     else
     {
@@ -2171,65 +1249,6 @@ int GetDockShopSelectionFromMouse(double mouseX, double mouseY)
     return -1;
 }
 
-void spawnParticle(const glm::vec3& pos, const glm::vec3& vel, const glm::vec4& color, float life, float size)
-{
-    for (auto& p : particles)
-    {
-        if (p.life <= 0.0f)
-        {
-            p.position = pos;
-            p.velocity = vel;
-            p.color = color;
-            p.life = life;
-            p.size = size;
-            return;
-        }
-    }
-}
-
-void spawnWakeParticles()
-{
-    if (std::abs(boat.velocity) < 0.4f) return;
-
-    float radians = glm::radians(boat.rotationY);
-    glm::vec3 forward(std::sin(radians), 0.0f, std::cos(radians));
-    glm::vec3 side(forward.z, 0.0f, -forward.x);
-    glm::vec3 base = boat.position - forward * 1.8f + glm::vec3(0.0f, 0.02f, 0.0f);
-
-    for (int i = 0; i < 2; ++i)
-    {
-        float lateral = (i == 0 ? -0.45f : 0.45f);
-        glm::vec3 pos = base + side * lateral;
-        glm::vec3 vel = -forward * (0.6f + static_cast<float>(rand() % 40) * 0.01f) + glm::vec3(0.0f, 0.2f, 0.0f);
-        spawnParticle(pos, vel, glm::vec4(0.86f, 0.93f, 1.0f, 0.85f), 0.8f, 11.0f);
-    }
-}
-
-void spawnSplash(const glm::vec3& pos, const glm::vec4& color, int count)
-{
-    for (int i = 0; i < count; ++i)
-    {
-        glm::vec3 vel(
-            (static_cast<float>(rand() % 100) / 100.0f - 0.5f) * 1.2f,
-            0.6f + static_cast<float>(rand() % 100) / 140.0f,
-            (static_cast<float>(rand() % 100) / 100.0f - 0.5f) * 1.2f);
-        spawnParticle(pos, vel, color, 0.9f, 10.0f + static_cast<float>(rand() % 6));
-    }
-}
-
-void updateParticles(float dt)
-{
-    for (auto& p : particles)
-    {
-        if (p.life <= 0.0f) continue;
-        p.life -= dt;
-        if (p.life <= 0.0f) continue;
-        p.velocity += glm::vec3(0.0f, -1.8f, 0.0f) * dt;
-        p.position += p.velocity * dt;
-        p.color.a = glm::clamp(p.life, 0.0f, 1.0f);
-    }
-}
-
 FishData catchFishFromZone(const FishZone& zone)
 {
     int roll = rand() % 100;
@@ -2270,6 +1289,7 @@ FishData catchFishFromZone(const FishZone& zone)
     return zone.fishPool[rand() % zone.fishPool.size()];
 }
 
+
 void setCatchMessage(GLFWwindow* window, const std::string& message, float timer = 2.5f)
 {
     ClearCaughtFishDisplay();
@@ -2298,7 +1318,7 @@ void breakBoatAndTowToDock(GLFWwindow* window)
     hullWarningTimer = 4.0f;
     TriggerCatchBanner("HULL BREACHED", 1.8f, 1.1f);
     setCatchMessage(window, lostCargo > 0 ? "HULL BREACHED - TOWED TO DOCK - LOST CARGO" : "HULL BREACHED - TOWED TO DOCK", 3.5f);
-    spawnSplash(glm::vec3(0.0f, 0.25f, 0.0f), glm::vec4(1.0f, 0.74f, 0.30f, 0.95f), 22);
+    SpawnSplash(particles, glm::vec3(0.0f, 0.25f, 0.0f), glm::vec4(1.0f, 0.74f, 0.30f, 0.95f), 22);
     gSound.PlaySplash();
 }
 
@@ -2319,7 +1339,7 @@ void handleHarbourMissionEvent(GLFWwindow* window, const HarbourMissionEvent& ev
         setCatchMessage(window,
             event.message + " (" + std::to_string(event.collectedParts) + "/" + std::to_string(event.totalParts) + ")",
             2.2f);
-        spawnSplash(event.position + glm::vec3(0.0f, 0.15f, 0.0f), glm::vec4(0.55f, 0.90f, 1.0f, 0.90f), 14);
+        SpawnSplash(particles, event.position + glm::vec3(0.0f, 0.15f, 0.0f), glm::vec4(0.55f, 0.90f, 1.0f, 0.90f), 14);
         gSound.PlaySplash();
         return;
     }
@@ -2334,7 +1354,7 @@ void handleHarbourMissionEvent(GLFWwindow* window, const HarbourMissionEvent& ev
         catchFlashTimer = std::max(catchFlashTimer, 0.35f);
         TriggerCatchBanner("HARBOUR REPAIRED", 1.8f, 0.25f);
         setCatchMessage(window, "Harbour mission complete: +" + std::to_string(rewardGold) + "g and hull repaired", 3.0f);
-        spawnSplash(glm::vec3(0.0f, 0.35f, 0.0f), glm::vec4(0.95f, 0.86f, 0.35f, 0.95f), 28);
+        SpawnSplash(particles, glm::vec3(0.0f, 0.35f, 0.0f), glm::vec4(0.95f, 0.86f, 0.35f, 0.95f), 28);
         gSound.PlaySplash();
         return;
     }
@@ -2360,7 +1380,7 @@ void handleHarbourMissionEvent(GLFWwindow* window, const HarbourMissionEvent& ev
         hullWarningTimer = std::max(hullWarningTimer, 3.0f);
         catchFlashTimer = std::max(catchFlashTimer, 0.4f);
         TriggerCatchBanner("PATROL HIT", 1.2f, 0.65f);
-        spawnSplash(event.position + glm::vec3(0.0f, 0.2f, 0.0f), glm::vec4(1.0f, 0.58f, 0.22f, 0.95f), 22);
+        SpawnSplash(particles, event.position + glm::vec3(0.0f, 0.2f, 0.0f), glm::vec4(1.0f, 0.58f, 0.22f, 0.95f), 22);
         gSound.PlaySplash();
 
         if (hullIntegrity <= 0.0f)
@@ -2384,50 +1404,9 @@ void triggerWinCelebration()
     TriggerCatchBanner("LOST ISLAND REACHED", 2.6f, 0.8f);
 
     const glm::vec3 goalPos = gIslandQuest.GetGoalIslandPosition();
-    spawnSplash(goalPos + glm::vec3(0.0f, 1.7f, 0.0f), glm::vec4(1.0f, 0.86f, 0.35f, 0.95f), 36);
-    spawnSplash(goalPos + glm::vec3(0.0f, 1.1f, 0.0f), glm::vec4(0.80f, 0.92f, 1.0f, 0.90f), 28);
+    SpawnSplash(particles, goalPos + glm::vec3(0.0f, 1.7f, 0.0f), glm::vec4(1.0f, 0.86f, 0.35f, 0.95f), 36);
+    SpawnSplash(particles, goalPos + glm::vec3(0.0f, 1.1f, 0.0f), glm::vec4(0.80f, 0.92f, 1.0f, 0.90f), 28);
     gSound.PlaySplash();
-}
-
-void spawnLostIslandAuraParticles()
-{
-    if (!(gIslandQuest.IsGoalIslandUnlocked() || gIslandQuest.HasWon())) return;
-
-    const glm::vec3 goalPos = gIslandQuest.GetGoalIslandPosition();
-    const int particleCount = gIslandQuest.HasWon() ? 4 : 2;
-
-    for (int i = 0; i < particleCount; ++i)
-    {
-        const float angle = static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 6.28318f;
-        const float radius = gIslandQuest.HasWon() ? (0.45f + static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 1.15f)
-                                                 : (0.30f + static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 0.85f);
-
-        glm::vec3 pos = goalPos + glm::vec3(std::cos(angle) * radius, 1.30f + static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 0.85f, std::sin(angle) * radius);
-        glm::vec3 vel(std::cos(angle) * 0.04f, 0.30f + static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 0.20f, std::sin(angle) * 0.04f);
-        glm::vec4 color = gIslandQuest.HasWon() ? glm::vec4(1.0f, 0.84f, 0.36f, 0.82f)
-                                                : glm::vec4(0.72f, 0.88f, 1.0f, 0.70f);
-
-        spawnParticle(pos, vel, color, 0.95f, gIslandQuest.HasWon() ? 10.0f : 8.0f);
-    }
-
-    if (gIslandQuest.HasWon())
-    {
-        glm::vec3 beamPos = goalPos + glm::vec3(0.0f, 1.95f + static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 0.65f, 0.0f);
-        spawnParticle(beamPos, glm::vec3(0.0f, 0.55f, 0.0f), glm::vec4(1.0f, 0.94f, 0.60f, 0.78f), 0.9f, 13.0f);
-    }
-}
-
-void spawnZoneAmbientParticles(float time)
-{
-    for (size_t i = 0; i < zones.size(); ++i)
-    {
-        const FishZone& zone = zones[i];
-        float angle = time * (0.6f + 0.18f * static_cast<float>(i)) + static_cast<float>(i) * 1.9f;
-        glm::vec3 pos = zone.center + glm::vec3(std::cos(angle) * (0.6f + zone.radius * 0.08f), 1.15f + 0.22f * std::sin(time * 1.8f + static_cast<float>(i)), std::sin(angle) * (0.6f + zone.radius * 0.08f));
-        glm::vec3 vel(0.0f, 0.10f + zone.danger * 0.16f, 0.0f);
-        glm::vec4 color(zone.tint.r, zone.tint.g, zone.tint.b, 0.60f + zone.danger * 0.20f);
-        spawnParticle(pos, vel, color, 0.65f + zone.danger * 0.35f, 6.0f + zone.danger * 4.0f);
-    }
 }
 
 // Applies danger-zone gameplay effects such as hull damage, warning
@@ -2559,7 +1538,7 @@ void awardFishCatch(GLFWwindow* window, const FishData& fish, float timingScore 
     if (window) glfwSetWindowTitle(window, lastCatchText.c_str());
     const glm::vec3 zoneTint = getZoneWaterTint();
     glm::vec4 splashColor(zoneTint.r + 0.35f, zoneTint.g + 0.28f, zoneTint.b + 0.26f, 0.90f);
-    spawnSplash(boat.position + glm::vec3(0.0f, 0.1f, 1.8f), splashColor, fish.rarity >= 2 ? 16 : 12);
+    SpawnSplash(particles, boat.position + glm::vec3(0.0f, 0.1f, 1.8f), splashColor, fish.rarity >= 2 ? 16 : 12);
     gSound.PlaySplash();
     if (fish.rarity >= 1) gSound.PlayReel();
     if (fish.rarity == 3) gSound.PlaySplash();
@@ -2607,7 +1586,7 @@ void tryFishing(GLFWwindow* window)
         {
             ClearCaughtFishDisplay();
             if (window) glfwSetWindowTitle(window, lastCatchText.c_str());
-            spawnSplash(boat.position + glm::vec3(0.0f, 0.1f, 1.8f), glm::vec4(0.95f, 0.86f, 0.30f, 0.95f), 16);
+            SpawnSplash(particles, boat.position + glm::vec3(0.0f, 0.1f, 1.8f), glm::vec4(0.95f, 0.86f, 0.30f, 0.95f), 16);
             gSound.PlaySplash();
             return;
         }
@@ -2656,7 +1635,7 @@ void resolveFishingMinigame(GLFWwindow* window, const FishingMinigameResult& res
         gHasPendingMinigameFish = false;
         ClearCaughtFishDisplay();
         if (window) glfwSetWindowTitle(window, lastCatchText.c_str());
-        spawnSplash(boat.position + glm::vec3(0.0f, 0.1f, 1.8f), glm::vec4(0.95f, 0.86f, 0.30f, 0.95f), 18);
+        SpawnSplash(particles, boat.position + glm::vec3(0.0f, 0.1f, 1.8f), glm::vec4(0.95f, 0.86f, 0.30f, 0.95f), 18);
         gSound.PlaySplash();
         return;
     }
@@ -2682,7 +1661,7 @@ void sellCargo()
     catchMessageTimer = 2.5f;
     TriggerCatchBanner("CARGO SOLD", 1.1f);
     std::cout << "[Dock] " << lastCatchText << " | Gold: " << totalMoney << std::endl;
-    spawnSplash(glm::vec3(0.0f, 0.3f, 1.2f), glm::vec4(1.0f, 0.86f, 0.35f, 1.0f), 18);
+    SpawnSplash(particles, glm::vec3(0.0f, 0.3f, 1.2f), glm::vec4(1.0f, 0.86f, 0.35f, 1.0f), 18);
 }
 
 void buyRodUpgrade()
@@ -2744,7 +1723,7 @@ void repairHull()
     catchMessageTimer = 2.5f;
     catchFlashTimer = std::max(catchFlashTimer, 0.25f);
     std::cout << "[Dock] " << lastCatchText << " | Hull: " << hullIntegrity << std::endl;
-    spawnSplash(glm::vec3(0.0f, 0.3f, 1.2f), glm::vec4(0.72f, 0.92f, 1.0f, 0.95f), 14);
+    SpawnSplash(particles, glm::vec3(0.0f, 0.3f, 1.2f), glm::vec4(0.72f, 0.92f, 1.0f, 0.95f), 14);
     gSound.PlaySplash();
     TriggerCatchBanner("HULL REPAIRED", 1.1f);
 }
@@ -3221,11 +2200,11 @@ int main()
     // Upload reusable meshes and render targets.
     // setupGeneratedIslandMeshes() lives in WorldGen.cpp and creates the
     // procedural island/grass meshes used by WorldRenderer.cpp.
-    setupCube();
+    SetupCube(cubeVAO, cubeVBO, cubeVertices, sizeof(cubeVertices));
     setupGeneratedIslandMeshes();
-    setupPlane();
-    setupSkybox();
-    setupParticles();
+    SetupPlane(planeVAO, planeVBO, planeVertices, sizeof(planeVertices));
+    SetupSkybox(skyboxVAO, skyboxVBO, skyboxVertices, sizeof(skyboxVertices));
+    SetupParticleBuffer(particleVAO, particleVBO, MAX_PARTICLES);
     setupShadowMap();
     setupZones();
     RegisterFishJournalEntries();
@@ -3681,7 +2660,7 @@ int main()
             if (gCameraShakeTimer > 0.0f) gCameraShakeTimer -= deltaTime;
             else gCameraShakeStrength = 0.0f;
 
-            spawnWakeParticles();
+            SpawnWakeParticles(particles, boat);
 
             if (keys[GLFW_KEY_M] && !minigameTogglePressed)
             {
@@ -3758,9 +2737,9 @@ int main()
             gSound.UpdateZoneLayer(currentAudioZone, deltaTime, getWorldDanger());
         }
 
-        updateParticles(deltaTime);
-        spawnLostIslandAuraParticles();
-        spawnZoneAmbientParticles(currentFrame);
+        UpdateParticles(particles, deltaTime);
+        SpawnLostIslandAuraParticles(particles, gIslandQuest);
+        SpawnZoneAmbientParticles(particles, zones, currentFrame);
 
         std::stringstream title;
         title << "Dredge-style Fishing Prototype | Zone: " << getCurrentZoneName()
@@ -3809,12 +2788,16 @@ int main()
         glfwSetWindowTitle(window, title.str().c_str());
 
         SunState sun = EvaluateSunState(currentFrame);
-        const float settingsBrightness = gSettingsMenu.GetBrightness();
+        // The settings menu brightness is applied directly to scene lighting,
+        // fog/clear colour, and the rendered world. This makes turning the
+        // slider down visibly darken the game instead of only making a very
+        // subtle change to the background colour.
+        const float settingsBrightness = clampf(gSettingsMenu.GetBrightness(), 0.20f, 1.45f);
         sun.intensity *= settingsBrightness;
-        sun.ambient *= (0.70f + settingsBrightness * 0.30f);
+        sun.ambient *= settingsBrightness;
 
-        glm::vec3 fogColor = getEffectiveFogColor() * (0.78f + settingsBrightness * 0.22f);
-        glm::vec3 clearColor = glm::mix(fogColor, glm::vec3(0.95f, 0.90f, 0.78f), catchFlashTimer * 0.4f);
+        glm::vec3 fogColor = getEffectiveFogColor() * settingsBrightness;
+        glm::vec3 clearColor = glm::mix(fogColor, glm::vec3(0.95f, 0.90f, 0.78f) * settingsBrightness, catchFlashTimer * 0.4f);
         clearColor = glm::mix(clearColor, glm::vec3(0.08f, 0.10f, 0.16f), 0.22f * (1.0f - sun.dayFactor));
         if (hullWarningTimer > 0.0f)
         {
@@ -3826,7 +2809,7 @@ int main()
             const float winGlow = 0.14f + 0.06f * std::sin(currentFrame * 3.5f);
             clearColor = glm::mix(clearColor, glm::vec3(0.96f, 0.86f, 0.46f), winGlow);
         }
-        clearColor *= (0.72f + settingsBrightness * 0.28f);
+        clearColor = glm::clamp(clearColor * settingsBrightness, glm::vec3(0.0f), glm::vec3(1.0f));
         glClearColor(clearColor.r, clearColor.g, clearColor.b, 1.0f);
 
         glm::vec3 cameraTarget = getCameraTarget();
@@ -3925,7 +2908,7 @@ int main()
         hud.weatherName = GetWeatherName();
         hud.weatherEffectText = GetWeatherEffectText();
         hud.weatherIntensity = GetWeatherEffect01();
-        hud.weatherTimeRemaining = std::max(0.0f, gWeather.timer);
+        hud.weatherTimeRemaining = GetWeatherTimeRemaining();
         hud.contractEntries = BuildContractHUDEntries();
         hud.contractsReady = GetReadyContractCount();
         hud.contractsCompleted = GetCompletedContractCount();

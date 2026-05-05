@@ -209,15 +209,19 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
   <ItemGroup>
     <ClCompile Include="FishingMinigame.cpp" />
     <ClCompile Include="GameSettingsMenu.cpp" />
+    <ClCompile Include="GeometrySetup.cpp" />
     <ClCompile Include="glad.c" />
     <ClCompile Include="helper\glslprogram.cpp" />
     <ClCompile Include="helper\glutils.cpp" />
     <ClCompile Include="IslandQuest.cpp" />
     <ClCompile Include="LostIslandSetpiece.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="ParticleEffects.cpp" />
     <ClCompile Include="PostProcess.cpp" />
+    <ClCompile Include="ResourceUtils.cpp" />
     <ClCompile Include="SoundManager.cpp" />
     <ClCompile Include="UIOverlay.cpp" />
+    <ClCompile Include="WeatherSystem.cpp" />
     <ClCompile Include="WorldGen.cpp" />
     <ClCompile Include="WorldRenderer.cpp" />
   </ItemGroup>
@@ -225,6 +229,8 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
     <ClInclude Include="camera.h" />
     <ClInclude Include="FishingMinigame.h" />
     <ClInclude Include="GameSettingsMenu.h" />
+    <ClInclude Include="GameTypes.h" />
+    <ClInclude Include="GeometrySetup.h" />
     <ClInclude Include="helper\glslprogram.h" />
     <ClInclude Include="helper\glutils.h" />
     <ClInclude Include="helper\scene.h" />
@@ -233,11 +239,14 @@ xcopy /E /I /Y "$(ProjectDir)media" "$(TargetDir)media"
     <ClInclude Include="helper\stb\stb_image_write.h" />
     <ClInclude Include="IslandQuest.h" />
     <ClInclude Include="LostIslandSetpiece.h" />
+    <ClInclude Include="ParticleEffects.h" />
     <ClInclude Include="PostProcess.h" />
     <ClInclude Include="RenderTypes.h" />
+    <ClInclude Include="ResourceUtils.h" />
     <ClInclude Include="SimpleOBJLoader.h" />
     <ClInclude Include="SoundManager.h" />
     <ClInclude Include="UIOverlay.h" />
+    <ClInclude Include="WeatherSystem.h" />
     <ClInclude Include="WorldGen.h" />
     <ClInclude Include="WorldRenderer.h" />
   </ItemGroup>

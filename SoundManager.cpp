@@ -148,6 +148,7 @@ void SoundManager::SetMusicVolume(float value)
 void SoundManager::SetSfxVolume(float value)
 {
     m_sfxVolume = Clamp01(value);
+    ApplyLoopVolumes();
 }
 
 float SoundManager::GetMasterVolume() const { return m_masterVolume; }
@@ -170,6 +171,9 @@ void SoundManager::ApplyLoopVolumes(float boatBaseVolume, float zoneBaseVolume)
 
     if (m_nextZoneLoop)
         m_nextZoneLoop->setVolume(std::min(m_nextZoneLoop->getVolume(), m_musicVolume * m_masterVolume));
+
+    if (m_patrolHorn)
+        m_patrolHorn->setVolume(0.85f * m_sfxVolume * m_masterVolume);
 }
 
 void SoundManager::PlayBackgroundLoop()
@@ -427,7 +431,7 @@ void SoundManager::StartPatrolHornLoop()
 
     if (m_patrolHorn)
     {
-        m_patrolHorn->setVolume(0.85f);
+        m_patrolHorn->setVolume(0.85f * m_sfxVolume * m_masterVolume);
     }
 }
 void SoundManager::StopPatrolHornLoop()

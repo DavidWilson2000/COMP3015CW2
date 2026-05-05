@@ -43,7 +43,7 @@ void GameSettingsMenu::AdjustSelected(float delta)
 {
     switch (m_state.selectedIndex)
     {
-    case 0: m_state.brightness = Clamp(m_state.brightness + delta, 0.55f, 1.45f); break;
+    case 0: m_state.brightness = Clamp(m_state.brightness + delta, 0.20f, 1.45f); break;
     case 1: m_state.masterVolume = Clamp(m_state.masterVolume + delta, 0.0f, 1.0f); break;
     case 2: m_state.musicVolume = Clamp(m_state.musicVolume + delta, 0.0f, 1.0f); break;
     case 3: m_state.sfxVolume = Clamp(m_state.sfxVolume + delta, 0.0f, 1.0f); break;
