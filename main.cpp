@@ -29,6 +29,7 @@
 #include "WorldGen.h"
 #include "RenderTypes.h"
 #include "WorldRenderer.h"
+#include "HarbourMission.h"
 
 
 
@@ -60,6 +61,7 @@ const std::string POSTPROCESS_FRAG_PATH = "shader/postprocess.frag";
 
 bool keys[1024] = { false };
 bool fishPressed = false;
+bool shopCloseReady = false;
 bool sellPressed = false;
 bool upgrade1Pressed = false;
 bool upgrade2Pressed = false;
@@ -81,6 +83,16 @@ bool settingsDownPressed = false;
 bool settingsLeftPressed = false;
 bool settingsRightPressed = false;
 bool settingsResetPressed = false;
+bool missionInteractPressed = false;
+bool missionResetPressed = false;
+bool shopLeftPressed = false;
+bool shopRightPressed = false;
+bool shopUpPressed = false;
+bool shopDownPressed = false;
+bool shopSelectPressed = false;
+bool shopMousePressed = false;
+bool shopClosePressed = false;
+bool contractTurnInPressed = false;
 
 struct FishData
 {
@@ -111,6 +123,17 @@ struct CargoItem
 {
     FishData fish;
 };
+
+enum class DockShopAction
+{
+    SellAll = 0,
+    UpgradeRod,
+    UpgradeEngine,
+    UpgradeCargo,
+    RepairHull
+};
+
+const int DOCK_SHOP_ACTION_COUNT = 5;
 
 struct Boat
 {
@@ -169,9 +192,9 @@ struct Boat
 float getWaterHeight(float x, float z, float time)
 {
     float y = 0.0f;
-    y += std::sin(x * 0.30f + time * 1.35f) * 0.16f;
-    y += std::cos(z * 0.22f + time * 1.10f) * 0.12f;
-    y += std::sin((x + z) * 0.12f + time * 0.80f) * 0.10f;
+    y += std::sin(x * 0.30f + time * 1.35f) * 0.05f;
+    y += std::cos(z * 0.22f + time * 1.10f) * 0.04f;
+    y += std::sin((x + z) * 0.12f + time * 0.80f) * 0.03f;
     return y;
 }
 float clampf(float v, float lo, float hi)
@@ -264,7 +287,41 @@ float gCameraShakeStrength = 0.0f;
 bool gGameStarted = false;
 bool gPaused = false;
 bool gJournalOpen = false;
+bool gDockShopOpen = false;
+int gDockShopSelection = 0;
 int gJournalPage = 0;
+
+enum class WeatherType
+{
+    Calm = 0,
+    Fog,
+    Rain,
+    Storm
+};
+
+struct WeatherRuntimeState
+{
+    WeatherType type = WeatherType::Calm;
+    float timer = 0.0f;
+    float duration = 40.0f;
+    float intensity = 0.0f;
+};
+
+struct ShopkeeperContract
+{
+    std::string fishName;
+    int quantity = 1;
+    int reward = 0;
+    bool completed = false;
+};
+
+WeatherRuntimeState gWeather;
+std::vector<ShopkeeperContract> gShopkeeperContracts;
+
+void setCatchMessage(GLFWwindow* window, const std::string& message, float timer);
+void spawnSplash(const glm::vec3& pos, const glm::vec4& color, int count);
+void InitialiseShopkeeperContracts();
+void UpdateWeather(float dt, GLFWwindow* window);
 float gSessionPlayTime = 0.0f;
 int gTotalFishCaught = 0;
 int gTotalGoldEarned = 0;
@@ -302,6 +359,7 @@ bool gHasPendingMinigameFish = false;
 SoundManager gSound;
 IslandQuest gIslandQuest;
 GameSettingsMenu gSettingsMenu;
+HarbourMission gHarbourMission;
 
 
 GLuint cubeVAO = 0, cubeVBO = 0;
@@ -330,13 +388,17 @@ GLuint woodTex = 0;
 GLuint rockTex = 0;
 GLuint grassTex = 0;
 GLuint boatTex = 0;
+GLuint patrolBoatTex = 0;
+GLuint scrapTex = 0;
 GLuint buoyTex = 0;
 GLuint treeTex = 0;
 GLuint zoneMarkerTex[3] = { 0, 0, 0 };
+GLuint gShopkeeperTexture = 0;
 
 ModelMesh boatModel;
 ModelMesh swordModel;
 ModelMesh treeModel;
+ModelMesh scrapModel;
 
 float boatVisualY = 0.18f;
 float boatVisualPitch = 0.0f;
@@ -1193,6 +1255,59 @@ GLuint createBoatTexture()
     return createTextureFromRGBData(data, w, h);
 }
 
+// Distinct patrol-boat texture used on the same imported boat mesh as the
+// player boat. This keeps the patrol visually consistent with the world while
+// making it readable as a separate AI/enemy object.
+GLuint createPatrolBoatTexture()
+{
+    const int w = 64, h = 64;
+    std::vector<unsigned char> data(w * h * 3);
+
+    for (int y = 0; y < h; ++y)
+    {
+        for (int x = 0; x < w; ++x)
+        {
+            const bool panelLine = (x % 16 == 0) || (y % 16 == 0);
+            const bool warningStripe = ((x + y) / 10) % 2 == 0;
+            const int i = (y * w + x) * 3;
+
+            // Dark blue/teal base with a subtle yellow safety-stripe pattern.
+            data[i + 0] = static_cast<unsigned char>(24  + (panelLine ? 20 : 0) + (warningStripe ? 18 : 0));
+            data[i + 1] = static_cast<unsigned char>(82  + (panelLine ? 24 : 0) + (warningStripe ? 30 : 0));
+            data[i + 2] = static_cast<unsigned char>(116 + (panelLine ? 25 : 0));
+        }
+    }
+
+    return createTextureFromRGBData(data, w, h);
+}
+
+
+// Rusty/metallic-looking fallback texture for the harbour mission scrap model.
+// This is used if no scrap texture image is provided in media/models/.
+GLuint createScrapTexture()
+{
+    const int w = 64, h = 64;
+    std::vector<unsigned char> data(w * h * 3);
+
+    for (int y = 0; y < h; ++y)
+    {
+        for (int x = 0; x < w; ++x)
+        {
+            const float noise = std::sin(x * 0.73f + y * 0.41f) * 0.5f + 0.5f;
+            const bool seam = (x % 17 == 0) || (y % 23 == 0);
+            const bool rustPatch = std::sin(x * 0.31f + y * 0.67f) > 0.55f;
+            const int i = (y * w + x) * 3;
+
+            // Cool grey metal with orange-brown rust patches.
+            data[i + 0] = static_cast<unsigned char>(clampf((rustPatch ? 120.0f : 82.0f) + noise * 35.0f + (seam ? 25.0f : 0.0f), 0.0f, 255.0f));
+            data[i + 1] = static_cast<unsigned char>(clampf((rustPatch ? 68.0f  : 82.0f) + noise * 24.0f + (seam ? 16.0f : 0.0f), 0.0f, 255.0f));
+            data[i + 2] = static_cast<unsigned char>(clampf((rustPatch ? 30.0f  : 86.0f) + noise * 18.0f + (seam ? 12.0f : 0.0f), 0.0f, 255.0f));
+        }
+    }
+
+    return createTextureFromRGBData(data, w, h);
+}
+
 GLuint createBuoyTexture()
 {
     const int w = 32, h = 32;
@@ -1268,7 +1383,7 @@ void setupZones()
         glm::vec3(0.18f, 0.55f, 0.35f), glm::vec3(0.72f, 0.82f, 0.92f), 16.0f, 66.0f, 0.2f, "Harbour Waters" });
 
     zones.push_back({ glm::vec3(-18.0f, 0.0f, -10.0f), 8.5f,
-        { {"Snapper",0,8}, {"Lionfish",2,20}, {"Eel",2,25}, {"Grouper",1,13} },
+        { {"SilverBrean",0,8}, {"Lionfish",2,20}, {"Eel",2,25}, {"Grouper",1,13} },
         glm::vec3(0.10f, 0.60f, 0.55f), glm::vec3(0.58f, 0.78f, 0.78f), 13.0f, 53.0f, 0.45f, "Reef Edge" });
 
     zones.push_back({ glm::vec3(23.0f, 0.0f, -23.0f), 10.0f,
@@ -1388,9 +1503,125 @@ float getZoneFogFar()
     return gEnvironmentBlend.fogFar;
 }
 
+
+const char* GetWeatherName()
+{
+    switch (gWeather.type)
+    {
+    case WeatherType::Fog: return "FOG";
+    case WeatherType::Rain: return "RAIN";
+    case WeatherType::Storm: return "STORM";
+    default: return "CALM";
+    }
+}
+
+std::string GetWeatherEffectText()
+{
+    switch (gWeather.type)
+    {
+    case WeatherType::Fog: return "LOW VISIBILITY";
+    case WeatherType::Rain: return "SLIPPERY WATER";
+    case WeatherType::Storm: return "ROUGH WATER DANGER";
+    default: return "CLEAR SAILING";
+    }
+}
+
+float GetWeatherEffect01()
+{
+    return gWeather.intensity;
+}
+
+glm::vec3 GetWeatherTint()
+{
+    switch (gWeather.type)
+    {
+    case WeatherType::Fog: return glm::vec3(0.72f, 0.76f, 0.78f);
+    case WeatherType::Rain: return glm::vec3(0.42f, 0.48f, 0.56f);
+    case WeatherType::Storm: return glm::vec3(0.18f, 0.22f, 0.30f);
+    default: return glm::vec3(0.70f, 0.82f, 0.94f);
+    }
+}
+
+float GetWeatherFogNearMultiplier()
+{
+    switch (gWeather.type)
+    {
+    case WeatherType::Fog: return glm::mix(1.0f, 0.42f, gWeather.intensity);
+    case WeatherType::Rain: return glm::mix(1.0f, 0.75f, gWeather.intensity);
+    case WeatherType::Storm: return glm::mix(1.0f, 0.55f, gWeather.intensity);
+    default: return 1.0f;
+    }
+}
+
+float GetWeatherFogFarMultiplier()
+{
+    switch (gWeather.type)
+    {
+    case WeatherType::Fog: return glm::mix(1.0f, 0.48f, gWeather.intensity);
+    case WeatherType::Rain: return glm::mix(1.0f, 0.72f, gWeather.intensity);
+    case WeatherType::Storm: return glm::mix(1.0f, 0.50f, gWeather.intensity);
+    default: return 1.0f;
+    }
+}
+
+float GetWeatherDangerBonus()
+{
+    switch (gWeather.type)
+    {
+    case WeatherType::Rain: return 0.10f * gWeather.intensity;
+    case WeatherType::Storm: return 0.30f * gWeather.intensity;
+    default: return 0.0f;
+    }
+}
+
+float GetWeatherSpeedMultiplier()
+{
+    switch (gWeather.type)
+    {
+    case WeatherType::Rain: return glm::mix(1.0f, 0.92f, gWeather.intensity);
+    case WeatherType::Storm: return glm::mix(1.0f, 0.78f, gWeather.intensity);
+    default: return 1.0f;
+    }
+}
+
+void SetNextWeather(GLFWwindow* window)
+{
+    const int roll = rand() % 100;
+    WeatherType next = WeatherType::Calm;
+    if (roll < 30) next = WeatherType::Calm;
+    else if (roll < 55) next = WeatherType::Fog;
+    else if (roll < 80) next = WeatherType::Rain;
+    else next = WeatherType::Storm;
+
+    gWeather.type = next;
+    gWeather.duration = 42.0f + static_cast<float>(rand() % 34);
+    gWeather.timer = gWeather.duration;
+    gWeather.intensity = 0.0f;
+
+    if (window && next != WeatherType::Calm)
+    {
+        setCatchMessage(window, std::string("Weather changing: ") + GetWeatherName(), 2.0f);
+        TriggerCatchBanner(std::string("WEATHER: ") + GetWeatherName(), 1.1f, next == WeatherType::Storm ? 0.5f : 0.0f);
+    }
+}
+
+void UpdateWeather(float dt, GLFWwindow* window)
+{
+    gWeather.timer -= dt;
+    if (gWeather.timer <= 0.0f)
+    {
+        SetNextWeather(window);
+    }
+
+    const float elapsed = std::max(0.0f, gWeather.duration - gWeather.timer);
+    const float fadeIn = clampf(elapsed / 8.0f, 0.0f, 1.0f);
+    const float fadeOut = clampf(gWeather.timer / 8.0f, 0.0f, 1.0f);
+    gWeather.intensity = (gWeather.type == WeatherType::Calm) ? 0.0f : std::min(fadeIn, fadeOut);
+}
+
 float getWorldDanger()
 {
-    return gEnvironmentBlend.danger;
+    return clampf(gEnvironmentBlend.danger + GetWeatherDangerBonus(), 0.0f, 1.0f);
 }
 
 float getQuestFogFactor()
@@ -1400,17 +1631,18 @@ float getQuestFogFactor()
 
 glm::vec3 getEffectiveFogColor()
 {
-    return glm::mix(getZoneFogColor(), glm::vec3(0.80f, 0.82f, 0.86f), getQuestFogFactor());
+    glm::vec3 base = glm::mix(getZoneFogColor(), glm::vec3(0.80f, 0.82f, 0.86f), getQuestFogFactor());
+    return glm::mix(base, GetWeatherTint(), GetWeatherEffect01() * 0.55f);
 }
 
 float getEffectiveFogNear()
 {
-    return glm::mix(getZoneFogNear(), 3.5f, getQuestFogFactor());
+    return glm::mix(getZoneFogNear() * GetWeatherFogNearMultiplier(), 3.5f, getQuestFogFactor());
 }
 
 float getEffectiveFogFar()
 {
-    return glm::mix(getZoneFogFar(), 11.0f, getQuestFogFactor());
+    return glm::mix(getZoneFogFar() * GetWeatherFogFarMultiplier(), 11.0f, getQuestFogFactor());
 }
 
 const char* getShadowFilterLabel()
@@ -1531,15 +1763,413 @@ void applyHullSpeedPenalty()
     const float forwardScale = 0.45f + health01 * 0.55f;
     const float backwardScale = 0.55f + health01 * 0.45f;
 
+    const float weatherSpeed = GetWeatherSpeedMultiplier();
     boat.velocity = glm::clamp(
         boat.velocity,
-        -boat.maxBackwardSpeed * backwardScale,
-        boat.maxForwardSpeed * forwardScale);
+        -boat.maxBackwardSpeed * backwardScale * weatherSpeed,
+        boat.maxForwardSpeed * forwardScale * weatherSpeed);
 }
 
 int rodUpgradeCost() { return 20 + (rodLevel - 1) * 15; }
 int engineUpgradeCost() { return 25 + (engineLevel - 1) * 20; }
 int cargoUpgradeCost() { return 18 + (cargoLevel - 1) * 14; }
+
+void setCatchMessage(GLFWwindow* window, const std::string& message, float timer);
+void sellCargo();
+void buyRodUpgrade();
+void buyEngineUpgrade();
+void buyCargoUpgrade();
+void repairHull();
+
+struct DockShopFishGroup
+{
+    std::string name;
+    int rarity = 0;
+    int value = 0;
+    int quantity = 0;
+};
+
+std::vector<DockShopFishGroup> BuildDockShopFishGroups()
+{
+    std::vector<DockShopFishGroup> groups;
+
+    for (const auto& item : cargo)
+    {
+        bool found = false;
+        for (auto& group : groups)
+        {
+            if (group.name == item.fish.name &&
+                group.rarity == item.fish.rarity &&
+                group.value == item.fish.value)
+            {
+                group.quantity += 1;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            DockShopFishGroup group;
+            group.name = item.fish.name;
+            group.rarity = item.fish.rarity;
+            group.value = item.fish.value;
+            group.quantity = 1;
+            groups.push_back(group);
+        }
+    }
+
+    return groups;
+}
+
+int getDockShopFishGroupCount()
+{
+    return static_cast<int>(BuildDockShopFishGroups().size());
+}
+
+int getDockShopSelectionCount()
+{
+    return getDockShopFishGroupCount() + DOCK_SHOP_ACTION_COUNT;
+}
+
+void clampDockShopSelection()
+{
+    const int total = std::max(1, getDockShopSelectionCount());
+    if (gDockShopSelection < 0) gDockShopSelection = 0;
+    if (gDockShopSelection >= total) gDockShopSelection = total - 1;
+}
+
+void openDockShop(GLFWwindow* window)
+{
+    if (!isAtDock()) return;
+
+    gDockShopOpen = true;
+    shopCloseReady = false; // player must release E before E can close the shop
+    gDockShopSelection = 0;
+    shopClosePressed = true; // Prevent the same E press that opened the shop from instantly closing it.
+    clampDockShopSelection();
+    gPaused = false;
+    gJournalOpen = false;
+    ClearCaughtFishDisplay();
+    setCatchMessage(window, "Dock shop opened", 1.0f);
+}
+
+void closeDockShop(GLFWwindow* window)
+{
+    if (!gDockShopOpen) return;
+    gDockShopOpen = false;
+    setCatchMessage(window, "Dock shop closed", 0.9f);
+}
+
+void sellCargoItem(size_t index)
+{
+    if (!isAtDock() || index >= cargo.size()) return;
+
+    const FishData fish = cargo[index].fish;
+    totalMoney += fish.value;
+    gTotalGoldEarned += fish.value;
+    gTotalCargoSold += 1;
+    cargo.erase(cargo.begin() + static_cast<std::ptrdiff_t>(index));
+
+    ClearCaughtFishDisplay();
+    lastCatchText = "Sold " + fish.name + " for " + std::to_string(fish.value) + "g";
+    catchMessageTimer = 2.0f;
+    TriggerCatchBanner("FISH SOLD", 0.9f);
+    clampDockShopSelection();
+}
+
+void sellCargoGroupAt(int groupIndex)
+{
+    const std::vector<DockShopFishGroup> groups = BuildDockShopFishGroups();
+    if (groupIndex < 0 || groupIndex >= static_cast<int>(groups.size())) return;
+
+    const DockShopFishGroup& group = groups[groupIndex];
+    for (size_t i = 0; i < cargo.size(); ++i)
+    {
+        const FishData& fish = cargo[i].fish;
+        if (fish.name == group.name && fish.rarity == group.rarity && fish.value == group.value)
+        {
+            sellCargoItem(i);
+            return;
+        }
+    }
+}
+
+void activateDockShopSelection(GLFWwindow* window)
+{
+    clampDockShopSelection();
+    const int groupCount = getDockShopFishGroupCount();
+    if (gDockShopSelection < groupCount)
+    {
+        sellCargoGroupAt(gDockShopSelection);
+        return;
+    }
+
+    const DockShopAction action = static_cast<DockShopAction>(gDockShopSelection - groupCount);
+    switch (action)
+    {
+    case DockShopAction::SellAll:
+        sellCargo();
+        gDockShopSelection = 0;
+        break;
+    case DockShopAction::UpgradeRod:
+        buyRodUpgrade();
+        break;
+    case DockShopAction::UpgradeEngine:
+        buyEngineUpgrade();
+        break;
+    case DockShopAction::UpgradeCargo:
+        buyCargoUpgrade();
+        break;
+    case DockShopAction::RepairHull:
+        repairHull();
+        break;
+    }
+    clampDockShopSelection();
+}
+
+std::vector<HUDShopItem> BuildDockShopItems()
+{
+    std::vector<HUDShopItem> items;
+    const std::vector<DockShopFishGroup> groups = BuildDockShopFishGroups();
+    items.reserve(groups.size());
+
+    for (const auto& group : groups)
+    {
+        HUDShopItem hudItem;
+        hudItem.name = group.name;
+        hudItem.rarity = group.rarity;
+        hudItem.value = group.value;
+        hudItem.quantity = group.quantity;
+        const FishIconTexture& icon = getFishIconTexture(group.name);
+        hudItem.texture = icon.texture;
+        hudItem.textureWidth = icon.width;
+        hudItem.textureHeight = icon.height;
+        hudItem.textureMissing = !icon.found;
+        items.push_back(hudItem);
+    }
+    return items;
+}
+
+std::vector<HUDShopAction> BuildDockShopActions()
+{
+    std::vector<HUDShopAction> actions;
+    actions.reserve(DOCK_SHOP_ACTION_COUNT);
+
+    HUDShopAction sellAll;
+    sellAll.label = "SELL ALL";
+    sellAll.valueText = cargo.empty() ? "EMPTY HOLD" : (std::to_string(getCargoValue()) + "G TOTAL");
+    sellAll.enabled = !cargo.empty();
+    actions.push_back(sellAll);
+
+    HUDShopAction rod;
+    rod.label = "ROD";
+    rod.valueText = "LV " + std::to_string(rodLevel) + " -> " + std::to_string(rodLevel + 1) + "  " + std::to_string(rodUpgradeCost()) + "G";
+    rod.affordable = totalMoney >= rodUpgradeCost();
+    actions.push_back(rod);
+
+    HUDShopAction engine;
+    engine.label = "ENGINE";
+    engine.valueText = "LV " + std::to_string(engineLevel) + " -> " + std::to_string(engineLevel + 1) + "  " + std::to_string(engineUpgradeCost()) + "G";
+    engine.affordable = totalMoney >= engineUpgradeCost();
+    actions.push_back(engine);
+
+    HUDShopAction cargoAction;
+    cargoAction.label = "CARGO";
+    cargoAction.valueText = std::to_string(cargoCapacity) + " -> " + std::to_string(cargoCapacity + 2) + "  " + std::to_string(cargoUpgradeCost()) + "G";
+    cargoAction.affordable = totalMoney >= cargoUpgradeCost();
+    actions.push_back(cargoAction);
+
+    HUDShopAction repair;
+    repair.label = "REPAIR";
+    repair.enabled = hullIntegrity < 99.9f;
+    repair.valueText = repair.enabled ? (std::to_string(getRepairCost()) + "G") : std::string("HULL FULL");
+    repair.affordable = !repair.enabled || totalMoney >= getRepairCost();
+    actions.push_back(repair);
+
+    return actions;
+}
+
+
+int CountCargoFishByName(const std::string& fishName)
+{
+    int count = 0;
+    for (const auto& item : cargo)
+    {
+        if (item.fish.name == fishName)
+            count += 1;
+    }
+    return count;
+}
+
+bool RemoveCargoFishByName(const std::string& fishName, int quantity)
+{
+    int removed = 0;
+    for (auto it = cargo.begin(); it != cargo.end() && removed < quantity; )
+    {
+        if (it->fish.name == fishName)
+        {
+            it = cargo.erase(it);
+            removed += 1;
+        }
+        else
+        {
+            ++it;
+        }
+    }
+    return removed == quantity;
+}
+
+void InitialiseShopkeeperContracts()
+{
+    gShopkeeperContracts.clear();
+    gShopkeeperContracts.push_back({ "Sardine", 2, 30, false });
+    gShopkeeperContracts.push_back({ "Lionfish", 1, 65, false });
+    gShopkeeperContracts.push_back({ "Ghost Fish", 1, 150, false });
+}
+
+int GetReadyContractCount()
+{
+    int ready = 0;
+    for (const auto& contract : gShopkeeperContracts)
+    {
+        if (!contract.completed && CountCargoFishByName(contract.fishName) >= contract.quantity)
+            ready += 1;
+    }
+    return ready;
+}
+
+int GetCompletedContractCount()
+{
+    int done = 0;
+    for (const auto& contract : gShopkeeperContracts)
+    {
+        if (contract.completed)
+            done += 1;
+    }
+    return done;
+}
+
+std::vector<HUDContractEntry> BuildContractHUDEntries()
+{
+    std::vector<HUDContractEntry> entries;
+    entries.reserve(gShopkeeperContracts.size());
+
+    for (const auto& contract : gShopkeeperContracts)
+    {
+        HUDContractEntry entry;
+        entry.title = contract.fishName + " ORDER";
+        entry.requirement = "BRING " + contract.fishName + " X" + std::to_string(contract.quantity);
+        const int current = CountCargoFishByName(contract.fishName);
+        entry.progress = contract.completed ? "DONE" : (std::to_string(std::min(current, contract.quantity)) + "/" + std::to_string(contract.quantity));
+        entry.reward = contract.reward;
+        entry.ready = !contract.completed && current >= contract.quantity;
+        entry.completed = contract.completed;
+        entries.push_back(entry);
+    }
+
+    return entries;
+}
+
+void TurnInReadyContracts(GLFWwindow* window)
+{
+    if (!isAtDock())
+    {
+        setCatchMessage(window, "Return to the dock to claim contracts", 1.4f);
+        return;
+    }
+
+    int completedNow = 0;
+    int rewardTotal = 0;
+    for (auto& contract : gShopkeeperContracts)
+    {
+        if (!contract.completed && CountCargoFishByName(contract.fishName) >= contract.quantity)
+        {
+            if (RemoveCargoFishByName(contract.fishName, contract.quantity))
+            {
+                contract.completed = true;
+                completedNow += 1;
+                rewardTotal += contract.reward;
+            }
+        }
+    }
+
+    if (completedNow > 0)
+    {
+        totalMoney += rewardTotal;
+        gTotalGoldEarned += rewardTotal;
+        gTotalCargoSold += completedNow;
+        ClearCaughtFishDisplay();
+        lastCatchText = "Completed " + std::to_string(completedNow) + " contract(s) for " + std::to_string(rewardTotal) + "g";
+        catchMessageTimer = 2.8f;
+        TriggerCatchBanner("CONTRACT COMPLETE", 1.3f);
+        spawnSplash(glm::vec3(0.0f, 0.35f, 1.2f), glm::vec4(1.0f, 0.86f, 0.35f, 1.0f), 22);
+    }
+    else
+    {
+        setCatchMessage(window, "No contracts ready yet", 1.5f);
+    }
+}
+
+int GetDockShopSelectionFromMouse(double mouseX, double mouseY)
+{
+    const float sw = static_cast<float>(gWindowWidth);
+    const float sh = static_cast<float>(gWindowHeight);
+    const float pad = 22.0f;
+    const float x = 54.0f;
+    const float y = 42.0f;
+    const float w = sw - 108.0f;
+    const float portraitW = 220.0f;
+    const float cargoX = x + pad;
+    const float cargoY = y + 114.0f;
+    const float cargoW = w - portraitW - pad * 3.0f;
+    const float cargoH = 348.0f;
+    const int itemsPerPage = 8;
+    const int groupCount = getDockShopFishGroupCount();
+
+    int visiblePage = 0;
+    if (groupCount > 0)
+    {
+        if (gDockShopSelection < groupCount)
+            visiblePage = std::max(0, gDockShopSelection / itemsPerPage);
+        else
+            visiblePage = std::max(0, (groupCount - 1) / itemsPerPage);
+    }
+
+    const int pageStart = visiblePage * itemsPerPage;
+    const int pageEnd = std::min(pageStart + itemsPerPage, groupCount);
+    const float gridStartY = cargoY + 44.0f;
+    const float cardGap = 14.0f;
+    const float cardW = (cargoW - 14.0f * 2.0f - cardGap) * 0.5f;
+    const float cardH = 134.0f;
+
+    for (int i = pageStart; i < pageEnd; ++i)
+    {
+        const int local = i - pageStart;
+        const int col = local % 2;
+        const int row = local / 2;
+        const float cx = cargoX + 14.0f + col * (cardW + cardGap);
+        const float cy = gridStartY + row * (cardH + cardGap);
+        if (mouseX >= cx && mouseX <= cx + cardW && mouseY >= cy && mouseY <= cy + cardH)
+            return i;
+    }
+
+    const float actionTitleY = cargoY + cargoH + 18.0f;
+    const float actionsY = actionTitleY + 34.0f;
+    const float actionsGap = 12.0f;
+    const float actionW = (w - pad * 2.0f - actionsGap * 4.0f) / 5.0f;
+    const float actionH = 96.0f;
+
+    for (int i = 0; i < DOCK_SHOP_ACTION_COUNT; ++i)
+    {
+        const float ax = x + pad + i * (actionW + actionsGap);
+        const float ay = actionsY;
+        if (mouseX >= ax && mouseX <= ax + actionW && mouseY >= ay && mouseY <= ay + actionH)
+            return groupCount + i;
+    }
+
+    return -1;
+}
 
 void spawnParticle(const glm::vec3& pos, const glm::vec3& vel, const glm::vec4& color, float life, float size)
 {
@@ -1670,6 +2300,79 @@ void breakBoatAndTowToDock(GLFWwindow* window)
     setCatchMessage(window, lostCargo > 0 ? "HULL BREACHED - TOWED TO DOCK - LOST CARGO" : "HULL BREACHED - TOWED TO DOCK", 3.5f);
     spawnSplash(glm::vec3(0.0f, 0.25f, 0.0f), glm::vec4(1.0f, 0.74f, 0.30f, 0.95f), 22);
     gSound.PlaySplash();
+}
+
+
+void handleHarbourMissionEvent(GLFWwindow* window, const HarbourMissionEvent& event)
+{
+    if (event.type == HarbourMissionEventType::None)
+    {
+        return;
+    }
+
+    ClearCaughtFishDisplay();
+
+    if (event.type == HarbourMissionEventType::PartCollected)
+    {
+        catchFlashTimer = std::max(catchFlashTimer, 0.18f);
+        TriggerCatchBanner("SALVAGE RECOVERED", 1.15f, 0.15f);
+        setCatchMessage(window,
+            event.message + " (" + std::to_string(event.collectedParts) + "/" + std::to_string(event.totalParts) + ")",
+            2.2f);
+        spawnSplash(event.position + glm::vec3(0.0f, 0.15f, 0.0f), glm::vec4(0.55f, 0.90f, 1.0f, 0.90f), 14);
+        gSound.PlaySplash();
+        return;
+    }
+
+    if (event.type == HarbourMissionEventType::Delivered)
+    {
+        gSound.StopPatrolHornLoop();
+
+        const int rewardGold = 45;
+        totalMoney += rewardGold;
+        hullIntegrity = std::min(100.0f, hullIntegrity + 25.0f);
+        catchFlashTimer = std::max(catchFlashTimer, 0.35f);
+        TriggerCatchBanner("HARBOUR REPAIRED", 1.8f, 0.25f);
+        setCatchMessage(window, "Harbour mission complete: +" + std::to_string(rewardGold) + "g and hull repaired", 3.0f);
+        spawnSplash(glm::vec3(0.0f, 0.35f, 0.0f), glm::vec4(0.95f, 0.86f, 0.35f, 0.95f), 28);
+        gSound.PlaySplash();
+        return;
+    }
+
+    if (event.type == HarbourMissionEventType::PlayerSpotted)
+    {
+        hullWarningTimer = std::max(hullWarningTimer, 1.2f);
+        TriggerCatchBanner("PATROL SPOTTED YOU", 1.0f, 0.35f);
+        setCatchMessage(window, event.message + " - evade!", 1.8f);
+        return;
+    }
+
+    if (event.type == HarbourMissionEventType::PlayerLost)
+    {
+        setCatchMessage(window, event.message, 1.3f);
+        return;
+    }
+
+    if (event.type == HarbourMissionEventType::PlayerCaught)
+    {
+        hullIntegrity -= 22.0f;
+        engineStutterTimer = std::max(engineStutterTimer, 1.8f);
+        hullWarningTimer = std::max(hullWarningTimer, 3.0f);
+        catchFlashTimer = std::max(catchFlashTimer, 0.4f);
+        TriggerCatchBanner("PATROL HIT", 1.2f, 0.65f);
+        spawnSplash(event.position + glm::vec3(0.0f, 0.2f, 0.0f), glm::vec4(1.0f, 0.58f, 0.22f, 0.95f), 22);
+        gSound.PlaySplash();
+
+        if (hullIntegrity <= 0.0f)
+        {
+            breakBoatAndTowToDock(window);
+        }
+        else
+        {
+            setCatchMessage(window, "Patrol rammed you - hull damaged", 2.3f);
+        }
+        return;
+    }
 }
 
 void triggerWinCelebration()
@@ -2096,6 +2799,33 @@ void drawModel(GLuint shader, const ModelMesh& modelMesh, const glm::mat4& model
     glBindVertexArray(0);
 }
 
+// Builds a transform for small collectible OBJ props. The mesh is centred on
+// X/Z, grounded on its lowest Y vertex, and uniformly scaled to a target size.
+// This means media/models/scrap.obj can be swapped for a different scrap model
+// without manually re-tuning every mission-part position.
+glm::mat4 buildGroundedModelTransform(const ModelMesh& modelMesh,
+                                      const glm::vec3& worldPosition,
+                                      float targetMaxDimension,
+                                      float yawRadians)
+{
+    const glm::vec3 boundsSize = modelMesh.maxBounds - modelMesh.minBounds;
+    const float maxDimension = std::max(boundsSize.x, std::max(boundsSize.y, boundsSize.z));
+    const float safeDimension = std::max(maxDimension, 0.001f);
+    const float uniformScale = targetMaxDimension / safeDimension;
+
+    const glm::vec3 modelCenter(
+        (modelMesh.minBounds.x + modelMesh.maxBounds.x) * 0.5f,
+        modelMesh.minBounds.y,
+        (modelMesh.minBounds.z + modelMesh.maxBounds.z) * 0.5f);
+
+    glm::mat4 model(1.0f);
+    model = glm::translate(model, worldPosition);
+    model = glm::rotate(model, yawRadians, glm::vec3(0, 1, 0));
+    model = glm::scale(model, glm::vec3(uniformScale));
+    model = glm::translate(model, glm::vec3(-modelCenter.x, -modelMesh.minBounds.y, -modelCenter.z));
+    return model;
+}
+
 // Renders dynamic world geometry that still lives in main.cpp.
 // Static set dressing is handled by WorldRenderer.cpp, while the boat
 // is kept here because it depends on movement, cargo, and water bobbing.
@@ -2192,7 +2922,102 @@ void renderWorldGeometry(GLuint shader, bool depthPass, float time)
         crate = glm::translate(crate, glm::vec3(xoff, yoff, zoff));
         crate = glm::scale(crate, glm::vec3(0.08f, 0.08f, 0.08f));
         drawCube(shader, crate);
-    } 
+    }
+
+    // Side-mission salvage parts: bobbing crates/buoys that the player can
+    // collect with Q. These render in both the depth pass and the lit pass so
+    // they cast/receive the same shadows as the rest of the scene.
+    if (!gHarbourMission.IsComplete())
+    {
+        int partIndex = 0;
+        for (const HarbourMissionPart& part : gHarbourMission.GetParts())
+        {
+            if (part.collected)
+            {
+                ++partIndex;
+                continue;
+            }
+
+            const float bob = std::sin(time * 2.2f + static_cast<float>(partIndex) * 1.3f) * 0.08f;
+            const float spin = time * 0.65f + static_cast<float>(partIndex);
+
+            if (scrapModel.loaded)
+            {
+                // Mission collectibles now use media/models/scrap.obj when it is available.
+                // The transform helper auto-centres and auto-scales the mesh so it behaves
+                // like a compact floating salvage object regardless of the OBJ's original size.
+                glm::mat4 scrapPiece = buildGroundedModelTransform(
+                    scrapModel,
+                    glm::vec3(part.position.x, part.position.y + bob - 0.08f, part.position.z),
+                    0.92f,
+                    spin);
+
+                setMat(scrapTex != 0 ? scrapTex : woodTex, MAT_WOOD, 1.0f);
+                drawModel(shader, scrapModel, scrapPiece);
+            }
+            else
+            {
+                // Fallback if media/models/scrap.obj is missing: keep the old crate/buoy cube.
+                glm::mat4 partModel(1.0f);
+                partModel = glm::translate(partModel, glm::vec3(part.position.x, part.position.y + bob, part.position.z));
+                partModel = glm::rotate(partModel, spin, glm::vec3(0, 1, 0));
+                partModel = glm::scale(partModel, glm::vec3(0.72f, 0.42f, 0.72f));
+
+                setMat(partIndex == 0 ? buoyTex : woodTex, partIndex == 0 ? MAT_BOAT : MAT_WOOD, 1.0f);
+                drawCube(shader, partModel);
+            }
+
+            glm::mat4 marker(1.0f);
+            marker = glm::translate(marker, glm::vec3(part.position.x, part.position.y + 0.65f + bob, part.position.z));
+            marker = glm::scale(marker, glm::vec3(0.18f, 0.18f, 0.18f));
+            setMat(buoyTex, MAT_BOAT, 1.0f);
+            drawCube(shader, marker);
+
+            ++partIndex;
+        }
+
+        if (gHarbourMission.HasAllParts())
+        {
+            const float pulse = 0.55f + 0.18f * std::sin(time * 4.0f);
+            glm::mat4 dockBeacon(1.0f);
+            dockBeacon = glm::translate(dockBeacon, glm::vec3(0.0f, 1.0f + pulse * 0.18f, 2.7f));
+            dockBeacon = glm::scale(dockBeacon, glm::vec3(0.35f + pulse * 0.08f, 0.35f + pulse * 0.08f, 0.35f + pulse * 0.08f));
+            setMat(buoyTex, MAT_BOAT, 1.0f);
+            drawCube(shader, dockBeacon);
+        }
+
+        // AI patrol boat. It now reuses the same imported boat model as the
+        // player boat, but at a smaller scale and with a separate blue/teal
+        // patrol texture so it is readable as a different craft. A small
+        // warning-light cube is left on top to make the AI easier to spot.
+        const HarbourPatrolEnemy& enemy = gHarbourMission.GetEnemy();
+        const float enemyYaw = std::atan2(enemy.forward.x, enemy.forward.z);
+        glm::mat4 enemyBase(1.0f);
+        enemyBase = glm::translate(enemyBase, glm::vec3(enemy.position.x, getWaterHeight(enemy.position.x, enemy.position.z, time) + 0.08f, enemy.position.z));
+        enemyBase = glm::rotate(enemyBase, enemyYaw, glm::vec3(0, 1, 0));
+
+        if (boatModel.loaded)
+        {
+            setMat(patrolBoatTex != 0 ? patrolBoatTex : boatTex, MAT_BOAT, 1.0f);
+
+            glm::mat4 patrolModel = enemyBase;
+            patrolModel = glm::translate(patrolModel, glm::vec3(0.0f, -0.06f, 0.0f));
+            patrolModel = glm::rotate(patrolModel, glm::radians(180.0f), glm::vec3(0, 1, 0));
+            patrolModel = glm::scale(patrolModel, glm::vec3(0.28f, 0.28f, 0.28f));
+            drawModel(shader, boatModel, patrolModel);
+        }
+        else
+        {
+            setMat(patrolBoatTex != 0 ? patrolBoatTex : boatTex, MAT_BOAT, 1.0f);
+            glm::mat4 enemyHull = glm::scale(enemyBase, glm::vec3(0.78f, 0.26f, 1.35f));
+            drawCube(shader, enemyHull);
+        }
+
+        setMat(buoyTex, MAT_BOAT, 1.0f);
+        glm::mat4 enemyLight = glm::translate(enemyBase, glm::vec3(0.0f, 0.42f, 0.1f));
+        enemyLight = glm::scale(enemyLight, glm::vec3(0.24f, 0.24f, 0.24f));
+        drawCube(shader, enemyLight);
+    }
 }
 
 // First render pass: render the world from the sun/light point of view
@@ -2404,6 +3229,8 @@ int main()
     setupShadowMap();
     setupZones();
     RegisterFishJournalEntries();
+    InitialiseShopkeeperContracts();
+    SetNextWeather(nullptr);
     initialiseEnvironmentBlend();
 
     // Load imported models. The sword has a fallback path because older
@@ -2417,6 +3244,16 @@ int main()
     // Optional natural tree model used on the procedural mini islands.
     // Keep tree.obj, tree.mtl and treecolorpallet.png in media/models/.
     loadOBJModel("media/models/tree.obj", treeModel);
+
+    // Harbour mission collectible model. Preferred path is media/models/scrap.obj.
+    // Fallbacks allow either media/models/scrap/scrap.obj or media/scrap.obj.
+    if (!loadOBJModel("media/models/scrap.obj", scrapModel))
+    {
+        if (!loadOBJModel("media/models/scrap/scrap.obj", scrapModel))
+        {
+            loadOBJModel("media/scrap.obj", scrapModel);
+        }
+    }
 
     // Load material textures. If a file is missing, procedural fallback
     // textures are generated so the scene still remains playable.
@@ -2455,6 +3292,23 @@ int main()
         boatTex = createBoatTexture();
     }
 
+    // The AI patrol uses the same imported boat model as the player, but with
+    // a separate procedural colour texture so it is easy to recognise.
+    patrolBoatTex = createPatrolBoatTexture();
+
+    // Optional texture for the scrap collectible model. If no image exists,
+    // the procedural rusty-metal texture is used instead.
+    scrapTex = loadTextureFromFile("media/models/scrap.png");
+    if (scrapTex == 0)
+    {
+        scrapTex = loadTextureFromFile("media/models/scrap.jpg");
+    }
+    if (scrapTex == 0)
+    {
+        std::cout << "[Fallback] Using procedural scrap texture." << std::endl;
+        scrapTex = createScrapTexture();
+    }
+
     buoyTex = loadTextureFromFile("textures/buoy.jpg");
     if (buoyTex == 0)
     {
@@ -2466,6 +3320,10 @@ int main()
     zoneMarkerTex[0] = createSolidColorTexture(255, 190, 70);   // Harbour Waters
     zoneMarkerTex[1] = createSolidColorTexture(60, 230, 180);   // Reef Edge
     zoneMarkerTex[2] = createSolidColorTexture(150, 85, 255);   // Deep Trench
+
+    gShopkeeperTexture = loadTextureFromFile("media/ui/shopkeeper.png", false);
+    if (gShopkeeperTexture == 0) gShopkeeperTexture = loadTextureFromFile("media/shopkeeper.png", false);
+    if (gShopkeeperTexture == 0) gShopkeeperTexture = loadTextureFromFile("media/ui/shopkeeper.jpg", false);
 
     skyboxCubemap = createFallbackCubemap();
 
@@ -2516,10 +3374,11 @@ int main()
         // key press from toggling menus multiple times across frames.
         if (keys[GLFW_KEY_ENTER] && !startPressed)
         {
-            if (!gGameStarted)
+
+        if (!gGameStarted)
             {
                 gGameStarted = true;
-                lastCatchText = "Set sail and find the 3 keys";
+                lastCatchText = "Set sail, find keys, and salvage harbour repair parts";
                 catchMessageTimer = 2.0f;
                 TriggerCatchBanner("VOYAGE STARTED", 1.2f);
             }
@@ -2544,7 +3403,7 @@ int main()
         if (gGameStarted && keys[GLFW_KEY_P] && !pausePressed)
         {
             gPaused = !gPaused;
-            if (gPaused) gJournalOpen = false;
+            if (gPaused) { gJournalOpen = false; gDockShopOpen = false; }
             pausePressed = true;
         }
         if (!keys[GLFW_KEY_P]) pausePressed = false;
@@ -2552,7 +3411,7 @@ int main()
         if (gGameStarted && keys[GLFW_KEY_J] && !journalPressed)
         {
             gJournalOpen = !gJournalOpen;
-            if (gJournalOpen) gPaused = false;
+            if (gJournalOpen) { gPaused = false; gDockShopOpen = false; }
             journalPressed = true;
         }
         if (!keys[GLFW_KEY_J]) journalPressed = false;
@@ -2564,6 +3423,7 @@ int main()
             {
                 gPaused = false;
                 gJournalOpen = false;
+                gDockShopOpen = false;
             }
             settingsTogglePressed = true;
             gSettingsMenu.ApplyAudio(gSound);
@@ -2634,7 +3494,110 @@ int main()
         }
         if (!keys[GLFW_KEY_RIGHT]) journalRightPressed = false;
 
-        const bool gameplayBlocked = !gGameStarted || gPaused || gJournalOpen || gSettingsMenu.IsOpen();
+        if (gDockShopOpen)
+        {
+            const int groupCount = getDockShopFishGroupCount();
+            const int totalCount = std::max(1, getDockShopSelectionCount());
+
+            if (keys[GLFW_KEY_LEFT] && !shopLeftPressed)
+            {
+                if (gDockShopSelection >= groupCount)
+                    gDockShopSelection = std::max(groupCount, gDockShopSelection - 1);
+                else
+                    gDockShopSelection = std::max(0, gDockShopSelection - 1);
+                shopLeftPressed = true;
+            }
+            if (!keys[GLFW_KEY_LEFT]) shopLeftPressed = false;
+
+            if (keys[GLFW_KEY_RIGHT] && !shopRightPressed)
+            {
+                if (gDockShopSelection >= groupCount)
+                    gDockShopSelection = std::min(totalCount - 1, gDockShopSelection + 1);
+                else
+                    gDockShopSelection = std::min(std::max(0, groupCount - 1), gDockShopSelection + 1);
+                shopRightPressed = true;
+            }
+            if (!keys[GLFW_KEY_RIGHT]) shopRightPressed = false;
+
+            if (keys[GLFW_KEY_UP] && !shopUpPressed)
+            {
+                if (gDockShopSelection >= groupCount)
+                    gDockShopSelection = (groupCount > 0) ? std::max(0, std::min(groupCount - 1, gDockShopSelection - groupCount)) : groupCount;
+                else
+                    gDockShopSelection = std::max(0, gDockShopSelection - 2);
+                shopUpPressed = true;
+            }
+            if (!keys[GLFW_KEY_UP]) shopUpPressed = false;
+
+            if (keys[GLFW_KEY_DOWN] && !shopDownPressed)
+            {
+                if (gDockShopSelection < groupCount)
+                {
+                    const int nextItem = gDockShopSelection + 2;
+                    gDockShopSelection = (nextItem < groupCount) ? nextItem : groupCount;
+                }
+                else
+                {
+                    gDockShopSelection = std::min(totalCount - 1, gDockShopSelection + 1);
+                }
+                shopDownPressed = true;
+            }
+            if (!keys[GLFW_KEY_DOWN]) shopDownPressed = false;
+
+            if (keys[GLFW_KEY_ENTER] && !shopSelectPressed)
+            {
+                activateDockShopSelection(window);
+                shopSelectPressed = true;
+            }
+            if (!keys[GLFW_KEY_ENTER]) shopSelectPressed = false;
+
+            if (keys[GLFW_KEY_T] && !contractTurnInPressed)
+            {
+                TurnInReadyContracts(window);
+                contractTurnInPressed = true;
+            }
+            if (!keys[GLFW_KEY_T]) contractTurnInPressed = false;
+
+            const bool mouseDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+            if (mouseDown && !shopMousePressed)
+            {
+                double mouseX = 0.0;
+                double mouseY = 0.0;
+                glfwGetCursorPos(window, &mouseX, &mouseY);
+                const int clickedSelection = GetDockShopSelectionFromMouse(mouseX, mouseY);
+                if (clickedSelection >= 0)
+                {
+                    gDockShopSelection = clickedSelection;
+                    activateDockShopSelection(window);
+                }
+                shopMousePressed = true;
+            }
+            if (!mouseDown) shopMousePressed = false;
+
+            if (!keys[GLFW_KEY_E])
+            {
+                shopCloseReady = true;
+            }
+
+            if (keys[GLFW_KEY_E] && shopCloseReady)
+            {
+                closeDockShop(window);
+                shopCloseReady = false;
+                fishPressed = true;
+            }
+        }
+        else
+        {
+            shopLeftPressed = false;
+            shopRightPressed = false;
+            shopUpPressed = false;
+            shopDownPressed = false;
+            shopSelectPressed = false;
+            shopMousePressed = false;
+            shopCloseReady = false;
+        }
+
+        const bool gameplayBlocked = !gGameStarted || gPaused || gJournalOpen || gSettingsMenu.IsOpen() || gDockShopOpen;
 
         if (!gameplayBlocked)
         {
@@ -2653,7 +3616,38 @@ int main()
             gSessionPlayTime += deltaTime;
             boat.update(deltaTime);
             updateEnvironmentBlend(deltaTime);
+            UpdateWeather(deltaTime, window);
             gFishingMinigame.Update(deltaTime);
+
+            const bool missionInteractNow = !gFishingMinigame.IsActive() && keys[GLFW_KEY_Q] && !missionInteractPressed;
+            if (keys[GLFW_KEY_Q]) missionInteractPressed = true;
+            else missionInteractPressed = false;
+
+            if (keys[GLFW_KEY_H] && !missionResetPressed)
+            {
+                gHarbourMission.Reset();
+                gSound.StopPatrolHornLoop();
+                missionResetPressed = true;
+                setCatchMessage(window, "Harbour recovery mission reset", 1.8f);
+                TriggerCatchBanner("MISSION RESET", 1.0f);
+            }
+            if (!keys[GLFW_KEY_H]) missionResetPressed = false;
+
+            if (keys[GLFW_KEY_T] && !contractTurnInPressed)
+            {
+                TurnInReadyContracts(window);
+                contractTurnInPressed = true;
+            }
+            if (!keys[GLFW_KEY_T]) contractTurnInPressed = false;
+
+            const HarbourMissionEvent missionEvent = gHarbourMission.Update(deltaTime, boat.position, missionInteractNow, isAtDock());
+            handleHarbourMissionEvent(window, missionEvent);
+
+            const bool patrolIsChasing =
+                !gHarbourMission.IsComplete() &&
+                gHarbourMission.GetEnemy().state == HarbourEnemyState::Chase;
+
+            gSound.UpdatePatrolHorn(patrolIsChasing);
 
             const int keysBeforeQuestUpdate = gIslandQuest.GetCollectedKeyCount();
             const bool hadWonBeforeQuestUpdate = gIslandQuest.HasWon();
@@ -2722,23 +3716,25 @@ int main()
                 resolveFishingMinigame(window, minigameResult);
             }
 
-            if (keys[GLFW_KEY_E] && !fishPressed) { tryFishing(window); fishPressed = true; }
+            if (keys[GLFW_KEY_E] && !fishPressed)
+            {
+                if (isAtDock())
+                {
+                    openDockShop(window);
+                }
+                else
+                {
+                    tryFishing(window);
+                }
+                fishPressed = true;
+            }
             if (!keys[GLFW_KEY_E]) fishPressed = false;
 
-            if (keys[GLFW_KEY_R] && !sellPressed) { sellCargo(); sellPressed = true; }
-            if (!keys[GLFW_KEY_R]) sellPressed = false;
-
-            if (keys[GLFW_KEY_1] && !upgrade1Pressed) { buyRodUpgrade(); upgrade1Pressed = true; }
-            if (!keys[GLFW_KEY_1]) upgrade1Pressed = false;
-
-            if (keys[GLFW_KEY_2] && !upgrade2Pressed) { buyEngineUpgrade(); upgrade2Pressed = true; }
-            if (!keys[GLFW_KEY_2]) upgrade2Pressed = false;
-
-            if (keys[GLFW_KEY_3] && !upgrade3Pressed) { buyCargoUpgrade(); upgrade3Pressed = true; }
-            if (!keys[GLFW_KEY_3]) upgrade3Pressed = false;
-
-            if (keys[GLFW_KEY_4] && !repairPressed) { repairHull(); repairPressed = true; }
-            if (!keys[GLFW_KEY_4]) repairPressed = false;
+            sellPressed = false;
+            upgrade1Pressed = false;
+            upgrade2Pressed = false;
+            upgrade3Pressed = false;
+            repairPressed = false;
         }
         else
         {
@@ -2750,6 +3746,9 @@ int main()
             repairPressed = false;
             minigameTogglePressed = false;
             minigameHookPressed = false;
+            missionInteractPressed = false;
+            missionResetPressed = false;
+            contractTurnInPressed = false;
             gSound.UpdateBoatMotor(0.0f, boat.maxForwardSpeed);
             std::string currentAudioZone = getCurrentZoneName();
             if (gIslandQuest.HasWon())
@@ -2783,17 +3782,19 @@ int main()
               << " | Camera: " << GetCameraModeLabel()
               << " | Shadow: " << getShadowFilterLabel()
               << " | MiniGame: " << (gFishingMinigame.IsEnabled() ? (gFishingMinigame.IsActive() ? "Active" : "On") : "Off")
-              << " | Quest: " << gIslandQuest.GetQuestSummary();
+              << " | Quest: " << gIslandQuest.GetQuestSummary()
+              << " | Side: " << gHarbourMission.GetObjectiveSummary()
+              << " | Patrol: " << gHarbourMission.GetEnemyStateLabel()
+              << " | Weather: " << GetWeatherName()
+              << " | Contracts: " << GetCompletedContractCount() << "/" << gShopkeeperContracts.size();
         if (!gGameStarted) title << " | PRESS ENTER TO START";
         if (gPaused) title << " | PAUSED";
         if (gJournalOpen) title << " | JOURNAL";
         if (gSettingsMenu.IsOpen()) title << " | SETTINGS";
+        if (gDockShopOpen) title << " | SHOP";
         if (isAtDock())
         {
-            title << " | Sell[R] | Rod[1:" << rodUpgradeCost() << "g]"
-                  << " | Engine[2:" << engineUpgradeCost() << "g]"
-                  << " | Cargo[3:" << cargoUpgradeCost() << "g]"
-                  << " | Repair[4:" << getRepairCost() << "g]";
+            title << " | E Open Shop";
         }
         else
         {
@@ -2895,6 +3896,8 @@ int main()
         hud.cargoUpgradeCost = cargoUpgradeCost();
         hud.keysCollected = gIslandQuest.GetCollectedKeyCount();
         hud.keysTotal = 3;
+        hud.harbourPartsCollected = gHarbourMission.GetCollectedPartCount();
+        hud.harbourPartsTotal = gHarbourMission.GetTotalPartCount();
         hud.repairCost = getRepairCost();
         hud.hullIntegrity = hullIntegrity;
         hud.hullCritical = hullIntegrity < 35.0f;
@@ -2919,16 +3922,28 @@ int main()
         hud.totalCargoSold = gTotalCargoSold;
         hud.perfectHooks = gPerfectHooks;
         hud.totalPlayTimeSeconds = gSessionPlayTime;
+        hud.weatherName = GetWeatherName();
+        hud.weatherEffectText = GetWeatherEffectText();
+        hud.weatherIntensity = GetWeatherEffect01();
+        hud.weatherTimeRemaining = std::max(0.0f, gWeather.timer);
+        hud.contractEntries = BuildContractHUDEntries();
+        hud.contractsReady = GetReadyContractCount();
+        hud.contractsCompleted = GetCompletedContractCount();
         hud.showStartScreen = !gGameStarted;
         hud.showPauseScreen = gPaused;
         hud.showJournal = gJournalOpen;
         hud.showVictoryScreen = gIslandQuest.HasWon();
+        hud.showDockShop = gDockShopOpen;
         hud.journalPageCount = GetJournalPageCount();
         gJournalPage = std::max(0, std::min(gJournalPage, hud.journalPageCount - 1));
         hud.journalPage = gJournalPage;
         hud.journalEntries = BuildJournalPageEntries(gJournalPage);
         hud.catchBannerText = gCatchBannerText;
         hud.catchBannerTimer = gCatchBannerTimer;
+        hud.shopItems = BuildDockShopItems();
+        hud.shopActions = BuildDockShopActions();
+        hud.shopSelection = gDockShopSelection;
+        hud.shopkeeperTexture = gShopkeeperTexture;
         if (gFishingMinigame.IsActive())
         {
             hud.hintText = gFishingMinigame.GetHintText() + " | " + gIslandQuest.GetQuestSummary();
@@ -2937,13 +3952,13 @@ int main()
             hud.flash = 0.0f;
             hud.showCaughtFishCard = false;
         }
-        if (hud.showStartScreen || hud.showPauseScreen || hud.showJournal)
+        if (hud.showStartScreen || hud.showPauseScreen || hud.showJournal || hud.showDockShop)
         {
             hud.showCaughtFishCard = false;
         }
         else if (hud.atDock)
         {
-            hud.hintText = "SELL:R  ROD:1(" + std::to_string(hud.rodUpgradeCost) + "G)  ENGINE:2(" + std::to_string(hud.engineUpgradeCost) + "G)  CARGO:3(" + std::to_string(hud.cargoUpgradeCost) + "G)  REPAIR:4(" + std::to_string(hud.repairCost) + "G)  C:" + std::string(GetCameraModeLabel()) + (gCameraMode == CameraMode::FreeLook ? std::string(" ARROWS LOOK") : std::string(""));
+            hud.hintText = std::string("E:OPEN SHOP  T:TURN IN CONTRACTS  C:") + GetCameraModeLabel() + (gCameraMode == CameraMode::FreeLook ? std::string(" ARROWS LOOK") : std::string(""));
         }
         else if (hud.hasWon)
         {
@@ -2957,10 +3972,23 @@ int main()
         {
             hud.hintText = "E:CAST  M:" + std::string(hud.minigameEnabled ? "ON" : "OFF") + "  C:" + std::string(GetCameraModeLabel()) + (gCameraMode == CameraMode::FreeLook ? std::string(" ARROWS LOOK") : std::string("")) + "  KEYS " + std::to_string(hud.keysCollected) + "/" + std::to_string(hud.keysTotal) + (hud.hullCritical ? std::string("  HULL CRITICAL") : std::string(""));
         }
+        if (gGameStarted && !hud.showPauseScreen && !hud.showJournal && !gFishingMinigame.IsActive())
+        {
+            hud.hintText += "  |  " + gHarbourMission.GetCompactHint(boat.position, hud.atDock);
+        }
+
+
+        if (hud.showDockShop)
+        {
+            hud.hintText = "SHOP OPEN  ARROWS MOVE  ENTER BUY/SELL  E CLOSE  T CONTRACTS";
+            hud.statusText = cargo.empty() ? "Sell fish, buy upgrades, and repair at the dock" : "Select a fish to sell one at a time, or use SELL ALL";
+            hud.messageTimer = 999.0f;
+        }
+
         if (!gGameStarted)
         {
             hud.hintText = "PRESS ENTER TO START";
-            hud.statusText = "FIND 3 KEYS AND REACH THE LOST ISLAND";
+            hud.statusText = "FIND 3 KEYS, SALVAGE 3 REPAIR PARTS, AND AVOID THE PATROL";
             hud.messageTimer = 999.0f;
         }
         RenderUIOverlay(hud);
@@ -2976,6 +4004,8 @@ int main()
     if (swordModel.vao != 0) glDeleteVertexArrays(1, &swordModel.vao);
     if (treeModel.vbo != 0) glDeleteBuffers(1, &treeModel.vbo);
     if (treeModel.vao != 0) glDeleteVertexArrays(1, &treeModel.vao);
+
+    if (gShopkeeperTexture != 0) glDeleteTextures(1, &gShopkeeperTexture);
 
     for (auto& entry : gFishIconTextures)
     {

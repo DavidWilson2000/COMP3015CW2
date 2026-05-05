@@ -16,7 +16,9 @@ public:
     void PlayReel();
     void PlaySplash();
     void UpdateBoatMotor(float speed, float maxSpeed);
-
+    void StartPatrolHornLoop();
+    void StopPatrolHornLoop();
+    void UpdatePatrolHorn(bool shouldPlay);
     void UpdateZoneLayer(const std::string& zoneName, float dt, float danger, float proximityBlend = 1.0f);
 
     void SetMasterVolume(float value);
@@ -45,7 +47,7 @@ private:
     std::string m_zoneLayerName;
     std::string m_nextZoneLayerName;
     std::string m_soundFolder;
-
+    irrklang::ISound* m_patrolHorn = nullptr;
     float m_masterVolume = 1.0f;
     float m_musicVolume = 1.0f;
     float m_sfxVolume = 1.0f;

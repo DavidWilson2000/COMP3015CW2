@@ -440,11 +440,11 @@ void RenderUIOverlay(const HUDState& state)
 
     const std::string questTitle = "QUEST";
     const std::string questSummary = state.questSummary.empty() ? "KEYS " + std::to_string(state.keysCollected) + "/" + std::to_string(state.keysTotal) : state.questSummary;
-    const std::string keysLine = "KEYS: " + std::to_string(state.keysCollected) + "/" + std::to_string(state.keysTotal);
+    const std::string scrapLine = "SCRAP: " + std::to_string(state.harbourPartsCollected) + "/" + std::to_string(state.harbourPartsTotal);
 
     float questTextWidth = std::max(
         EstimateTextWidth(questTitle, titleScale),
-        std::max(EstimateTextWidth(questSummary, bodyScale), EstimateTextWidth(keysLine, bodyScale)));
+        std::max(EstimateTextWidth(questSummary, bodyScale), EstimateTextWidth(scrapLine, bodyScale)));
     float questBarWidth = std::max(200.0f, questTextWidth);
     float questPanelWidth = std::max(leftPanelWidth, questBarWidth + panelPad * 2.0f);
     questPanelWidth = std::min(questPanelWidth, sw * 0.45f);
@@ -461,7 +461,7 @@ void RenderUIOverlay(const HUDState& state)
     cursorY += TextHeight(titleScale) + questGap;
     AddText(verts, leftX + panelPad, cursorY, bodyScale, text, questSummary);
     cursorY += TextHeight(bodyScale) + questGap;
-    AddText(verts, leftX + panelPad, cursorY, bodyScale, text, keysLine);
+    AddText(verts, leftX + panelPad, cursorY, bodyScale, text, scrapLine);
     cursorY += TextHeight(bodyScale) + questGap;
 
     const glm::vec4 questBarColor = state.hasWon ? good : (state.goalIslandUnlocked ? accent : neutral);
@@ -509,8 +509,52 @@ void RenderUIOverlay(const HUDState& state)
         Clamp01(state.danger),
         glm::vec4(0.20f, 0.14f, 0.12f, 0.95f), warn);
 
+    const float sidePanelY = topY + rightPanelHeight + 12.0f;
+    const float weatherPanelHeight = 92.0f;
+    AddOutlinedPanel(verts, rightX, sidePanelY, rightPanelWidth, weatherPanelHeight, panelSoft, outline);
+    AddText(verts, rightX + panelPad, sidePanelY + 12.0f, 2.6f, accent, "WEATHER");
+    AddText(verts, rightX + panelPad, sidePanelY + 40.0f, 2.3f, text, state.weatherName.empty() ? "CALM" : state.weatherName);
+    AddText(verts, rightX + panelPad + 118.0f, sidePanelY + 42.0f, 1.8f, neutral, state.weatherEffectText);
+    AddBar(verts, rightX + panelPad, sidePanelY + 68.0f, rightBarWidth, 14.0f,
+        Clamp01(state.weatherIntensity),
+        glm::vec4(0.12f, 0.18f, 0.24f, 0.95f),
+        state.weatherName == "STORM" ? warn : neutral);
+
+    const float contractPanelY = sidePanelY + weatherPanelHeight + 10.0f;
+    const float contractPanelHeight = 238.0f;
+    AddOutlinedPanel(verts, rightX, contractPanelY, rightPanelWidth, contractPanelHeight, panel, outline);
+    AddText(verts, rightX + panelPad, contractPanelY + 10.0f, 2.4f, accent, "SHOP CONTRACTS");
+    AddText(verts, rightX + panelPad, contractPanelY + 36.0f, 1.6f, text,
+            "DONE " + std::to_string(state.contractsCompleted) + "/" + std::to_string(std::max(1, static_cast<int>(state.contractEntries.size()))) +
+            "   READY " + std::to_string(state.contractsReady));
+
+    float contractY = contractPanelY + 58.0f;
+    const float contractCardH = 48.0f;
+    const float contractGap = 7.0f;
+    for (size_t i = 0; i < state.contractEntries.size() && i < 3; ++i)
+    {
+        const HUDContractEntry& c = state.contractEntries[i];
+        const glm::vec4 border = c.completed ? good : (c.ready ? accent : outline);
+        AddOutlinedPanel(verts, rightX + panelPad, contractY, rightBarWidth, contractCardH,
+                         c.ready && !c.completed ? glm::vec4(0.12f, 0.16f, 0.10f, 0.82f) : glm::vec4(0.06f, 0.09f, 0.12f, 0.76f),
+                         border);
+        AddText(verts, rightX + panelPad + 8.0f, contractY + 4.0f, 1.55f, c.completed ? good : text, c.title);
+        AddText(verts, rightX + panelPad + 8.0f, contractY + 20.0f, 1.25f, neutral, c.requirement);
+        AddText(verts, rightX + panelPad + 8.0f, contractY + 34.0f, 1.30f, c.ready && !c.completed ? accent : neutral,
+                c.completed ? ("DONE  REWARD " + std::to_string(c.reward) + "G") : ("PROGRESS " + c.progress + "  REWARD " + std::to_string(c.reward) + "G"));
+        contractY += contractCardH + contractGap;
+    }
+    if (state.contractsReady > 0)
+    {
+        AddText(verts, rightX + panelPad, contractPanelY + contractPanelHeight - 22.0f, 1.55f, good, "PRESS T AT DOCK TO CLAIM");
+    }
+    else
+    {
+        AddText(verts, rightX + panelPad, contractPanelY + contractPanelHeight - 22.0f, 1.55f, text, "CATCH REQUESTED FISH");
+    }
+
     const std::string dockText = state.atDock
-        ? "AT DOCK  SELL:R  ROD:1(" + std::to_string(state.rodUpgradeCost) + "G)  ENGINE:2(" + std::to_string(state.engineUpgradeCost) + "G)  CARGO:3(" + std::to_string(state.cargoUpgradeCost) + "G)  REPAIR:4(" + std::to_string(state.repairCost) + "G)"
+        ? "AT DOCK  E SHOP  T CONTRACTS"
         : std::string("OPEN WATER  PRESS E TO ") + (state.minigameEnabled ? "CAST" : "FISH");
 
     const std::string statusLine =
@@ -594,7 +638,7 @@ void RenderUIOverlay(const HUDState& state)
         }
     }
 
-    if (state.showStartScreen || state.showPauseScreen || state.showJournal || state.showVictoryScreen)
+    if (state.showStartScreen || state.showPauseScreen || state.showJournal || state.showVictoryScreen || state.showDockShop)
     {
         PushQuad(verts, 0.0f, 0.0f, sw, sh, glm::vec4(0.01f, 0.02f, 0.04f, 0.42f));
     }
@@ -604,7 +648,7 @@ void RenderUIOverlay(const HUDState& state)
         const std::string title = "DREDGE STYLE FISHING PROTOTYPE";
         std::vector<std::pair<std::string, glm::vec4>> lines = {
             {"FIND 3 KEYS AND REACH THE LOST ISLAND", text},
-            {"WASD SAIL   E FISH   M TOGGLE MINIGAME", text},
+            {"WASD SAIL   E FISH / DOCK SHOP   M TOGGLE MINIGAME", text},
             {"O SETTINGS   P CONTROLS", text},
             {"PRESS ENTER TO START", good}
         };
@@ -615,8 +659,8 @@ void RenderUIOverlay(const HUDState& state)
     {
         const std::string title = "PAUSED / HELP";
         std::vector<std::pair<std::string, glm::vec4>> lines = {
-            {"WASD MOVE   E FISH   SPACE HOOK   M MINIGAME", text},
-            {"R SELL   1 2 3 UPGRADES   4 REPAIR", text},
+            {"WASD MOVE   E FISH / SHOP   SPACE HOOK   M MINIGAME", text},
+            {"AT DOCK: E SHOP   ARROWS/CLICK SELECT   ENTER BUY/SELL", text},
             {"J JOURNAL   P CLOSE HELP   F5-F8 POST FX", text},
               {"O SETTINGS  F9-F11 SHADERS", text},
             {"PRESS P TO RESUME", good}
@@ -691,6 +735,146 @@ void RenderUIOverlay(const HUDState& state)
         }
 
         AddText(verts, x + pad, y + h - 32.0f, 2.2f, good, "LEFT / RIGHT CHANGE PAGE    J CLOSE JOURNAL");
+    }
+
+
+    if (state.showDockShop)
+    {
+        const float pad = 22.0f;
+        const float x = 54.0f;
+        const float y = 42.0f;
+        const float w = sw - 108.0f;
+        const float h = sh - 84.0f;
+        AddOutlinedPanel(verts, x, y, w, h, glm::vec4(0.02f, 0.05f, 0.09f, 0.95f), accent);
+        AddText(verts, x + pad, y + pad, 3.6f, accent, "DOCK SHOP");
+        AddText(verts, x + pad, y + 56.0f, 2.0f, text, "ARROWS MOVE   ENTER BUY OR SELL   T CONTRACTS   E CLOSE SHOP");
+        AddText(verts, x + pad, y + 82.0f, 2.1f, good,
+                "GOLD " + std::to_string(state.gold) + "G   HOLD VALUE " + std::to_string(state.cargoValue) + "G   FISH " + std::to_string(state.cargoCount) + "/" + std::to_string(state.cargoCapacity));
+
+        const float portraitW = 220.0f;
+        const float portraitH = 308.0f;
+        const float portraitX = x + w - portraitW - pad;
+        const float portraitY = y + 104.0f;
+        AddOutlinedPanel(verts, portraitX, portraitY, portraitW, portraitH, panel, outline);
+        AddText(verts, portraitX + 14.0f, portraitY + 14.0f, 2.5f, neutral, "SHOPKEEPER");
+        if (state.shopkeeperTexture != 0)
+        {
+            QueueTextureQuad(textureQuads, state.shopkeeperTexture,
+                             portraitX + 10.0f, portraitY + 46.0f,
+                             portraitW - 20.0f, portraitH - 58.0f,
+                             glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+        }
+        else
+        {
+            PushQuad(verts, portraitX + 10.0f, portraitY + 46.0f, portraitW - 20.0f, portraitH - 58.0f, glm::vec4(0.10f, 0.14f, 0.18f, 0.85f));
+            AddText(verts, portraitX + 28.0f, portraitY + 142.0f, 2.0f, outline, "ADD media/ui/shopkeeper.png");
+        }
+
+        const float cargoX = x + pad;
+        const float cargoY = y + 114.0f;
+        const float cargoW = w - portraitW - pad * 3.0f;
+        const float cargoH = 348.0f;
+        AddOutlinedPanel(verts, cargoX, cargoY, cargoW, cargoH, glm::vec4(0.05f, 0.08f, 0.11f, 0.84f), outline);
+        AddText(verts, cargoX + 14.0f, cargoY + 12.0f, 2.7f, accent, "FISH IN HOLD");
+
+        const int itemsPerPage = 8;
+        const int shopItemCount = static_cast<int>(state.shopItems.size());
+        int visiblePage = 0;
+        if (shopItemCount > 0)
+        {
+            if (state.shopSelection < shopItemCount)
+                visiblePage = std::max(0, state.shopSelection / itemsPerPage);
+            else
+                visiblePage = std::max(0, (shopItemCount - 1) / itemsPerPage);
+        }
+        const int pageCount = std::max(1, (shopItemCount + itemsPerPage - 1) / itemsPerPage);
+        const int pageStart = visiblePage * itemsPerPage;
+        const int pageEnd = std::min(pageStart + itemsPerPage, shopItemCount);
+        AddText(verts, cargoX + cargoW - 160.0f, cargoY + 14.0f, 1.8f, text,
+                "PAGE " + std::to_string(visiblePage + 1) + "/" + std::to_string(pageCount));
+
+        if (shopItemCount == 0)
+        {
+            AddText(verts, cargoX + 18.0f, cargoY + 58.0f, 2.2f, warn, "NO FISH TO SELL - GO FISHING!");
+        }
+
+        const float gridStartY = cargoY + 44.0f;
+        const float cardGap = 14.0f;
+        const float cardW = (cargoW - 14.0f * 2.0f - cardGap) * 0.5f;
+        const float cardH = 134.0f;
+        for (int i = pageStart; i < pageEnd; ++i)
+        {
+            const int local = i - pageStart;
+            const int col = local % 2;
+            const int row = local / 2;
+            const float cx = cargoX + 14.0f + col * (cardW + cardGap);
+            const float cy = gridStartY + row * (cardH + cardGap);
+            const bool selected = (state.shopSelection == i);
+            const HUDShopItem& item = state.shopItems[i];
+            AddOutlinedPanel(verts, cx, cy, cardW, cardH,
+                             selected ? glm::vec4(0.12f, 0.18f, 0.22f, 0.94f) : panel,
+                             selected ? RarityColor(item.rarity) : outline);
+
+            const float artX = cx + 12.0f;
+            const float artY = cy + 30.0f;
+            const float artW = 104.0f;
+            const float artH = 82.0f;
+            PushQuad(verts, artX, artY, artW, artH, glm::vec4(0.02f, 0.03f, 0.05f, 0.85f));
+            if (item.texture != 0 && !item.textureMissing)
+            {
+                float imgW = static_cast<float>(std::max(1, item.textureWidth));
+                float imgH = static_cast<float>(std::max(1, item.textureHeight));
+                float fit = std::min(artW / imgW, artH / imgH);
+                float drawW = imgW * fit;
+                float drawH = imgH * fit;
+                QueueTextureQuad(textureQuads, item.texture,
+                                 artX + (artW - drawW) * 0.5f,
+                                 artY + (artH - drawH) * 0.5f,
+                                 drawW, drawH,
+                                 glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+            }
+            else
+            {
+                AddText(verts, artX + 18.0f, artY + 32.0f, 1.8f, warn, "NO PNG");
+            }
+
+            AddText(verts, cx + 126.0f, cy + 12.0f, 2.1f, RarityColor(item.rarity), item.name);
+            AddText(verts, cx + 126.0f, cy + 38.0f, 1.8f, text, RarityName(item.rarity) + "  X" + std::to_string(item.quantity));
+            AddText(verts, cx + 126.0f, cy + 64.0f, 1.8f, good, "SELL 1: " + std::to_string(item.value) + "G");
+            AddText(verts, cx + 126.0f, cy + 90.0f, 1.7f, selected ? accent : text, selected ? "ENTER / CLICK" : "SELECT / CLICK");
+        }
+
+        const float actionTitleY = cargoY + cargoH + 18.0f;
+        AddText(verts, cargoX, actionTitleY, 2.7f, accent, "UPGRADES / SERVICES");
+        const float actionsY = actionTitleY + 34.0f;
+        const float actionsGap = 12.0f;
+        const int actionCount = static_cast<int>(state.shopActions.size());
+        const float actionW = (w - pad * 2.0f - actionsGap * 4.0f) / 5.0f;
+        const float actionH = 96.0f;
+        for (int i = 0; i < actionCount; ++i)
+        {
+            const int globalIndex = shopItemCount + i;
+            const bool selected = (state.shopSelection == globalIndex);
+            const HUDShopAction& action = state.shopActions[i];
+            const float ax = x + pad + i * (actionW + actionsGap);
+            const float ay = actionsY;
+            glm::vec4 border = outline;
+            if (!action.enabled)
+                border = warn;
+            else if (!action.affordable)
+                border = warn;
+            else if (selected)
+                border = accent;
+            else
+                border = good;
+            AddOutlinedPanel(verts, ax, ay, actionW, actionH,
+                             selected ? glm::vec4(0.12f, 0.18f, 0.22f, 0.94f) : panel,
+                             border);
+            AddText(verts, ax + 12.0f, ay + 14.0f, 2.1f, selected ? accent : text, action.label);
+            AddText(verts, ax + 12.0f, ay + 42.0f, 1.9f, action.enabled ? (action.affordable ? good : warn) : warn, action.valueText);
+            AddText(verts, ax + 12.0f, ay + 68.0f, 1.8f, text,
+                    selected ? "ENTER TO USE" : (action.enabled ? "AVAILABLE" : "UNAVAILABLE"));
+        }
     }
 
     if (state.showVictoryScreen)

@@ -16,6 +16,36 @@ struct HUDJournalEntry
     int textureHeight = 0;
 };
 
+struct HUDShopItem
+{
+    std::string name;
+    int rarity = 0;
+    int value = 0;
+    int quantity = 1;
+    bool textureMissing = false;
+    unsigned int texture = 0;
+    int textureWidth = 0;
+    int textureHeight = 0;
+};
+
+struct HUDShopAction
+{
+    std::string label;
+    std::string valueText;
+    bool enabled = true;
+    bool affordable = true;
+};
+
+struct HUDContractEntry
+{
+    std::string title;
+    std::string requirement;
+    std::string progress;
+    int reward = 0;
+    bool ready = false;
+    bool completed = false;
+};
+
 struct HUDState
 {
     int screenWidth = 1280;
@@ -38,6 +68,8 @@ struct HUDState
     int repairCost = 0;
     int keysCollected = 0;
     int keysTotal = 3;
+    int harbourPartsCollected = 0;
+    int harbourPartsTotal = 3;
     int caughtFishRarity = 0;
     int totalFishCaught = 0;
     int totalGoldEarned = 0;
@@ -47,6 +79,11 @@ struct HUDState
     float danger = 0.0f;
     float hullIntegrity = 100.0f;
     float totalPlayTimeSeconds = 0.0f;
+    float weatherIntensity = 0.0f;
+    float weatherTimeRemaining = 0.0f;
+
+    std::string weatherName;
+    std::string weatherEffectText;
 
     bool atDock = false;
     bool minigameEnabled = false;
@@ -60,6 +97,7 @@ struct HUDState
     bool showPauseScreen = false;
     bool showJournal = false;
     bool showVictoryScreen = false;
+    bool showDockShop = false;
     unsigned int caughtFishTexture = 0;
     int caughtFishTextureWidth = 0;
     int caughtFishTextureHeight = 0;
@@ -71,6 +109,14 @@ struct HUDState
     std::string caughtFishName;
     std::string catchBannerText;
     std::vector<HUDJournalEntry> journalEntries;
+
+    std::vector<HUDShopItem> shopItems;
+    std::vector<HUDShopAction> shopActions;
+    std::vector<HUDContractEntry> contractEntries;
+    unsigned int shopkeeperTexture = 0;
+    int shopSelection = 0;
+    int contractsReady = 0;
+    int contractsCompleted = 0;
 };
 
 bool InitUIOverlay();

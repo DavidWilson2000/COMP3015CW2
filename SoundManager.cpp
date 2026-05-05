@@ -66,7 +66,7 @@ void SoundManager::Shutdown()
 {
     StopBoatMotor();
     StopZoneLayers();
-
+    StopPatrolHornLoop();
     if (m_backgroundLoop)
     {
         m_backgroundLoop->stop();
@@ -403,4 +403,52 @@ void SoundManager::UpdateZoneLayer(const std::string& zoneName, float dt, float 
     }
 
     AdvanceZoneCrossfade(dt, targetVolume);
+}
+void SoundManager::StartPatrolHornLoop()
+{
+    if (!m_engine)
+    {
+        return;
+    }
+
+    // Do not start another horn if one is already playing.
+    if (m_patrolHorn)
+    {
+        return;
+    }
+
+    std::string hornPath = m_soundFolder + "/horn.wav";
+
+    // Parameters:
+    // true  = loop
+    // false = do not start paused
+    // true  = track the sound so we can stop it later
+    m_patrolHorn = m_engine->play2D(hornPath.c_str(), true, false, true);
+
+    if (m_patrolHorn)
+    {
+        m_patrolHorn->setVolume(0.85f);
+    }
+}
+void SoundManager::StopPatrolHornLoop()
+{
+    if (!m_patrolHorn)
+    {
+        return;
+    }
+
+    m_patrolHorn->stop();
+    m_patrolHorn->drop();
+    m_patrolHorn = nullptr;
+}
+void SoundManager::UpdatePatrolHorn(bool shouldPlay)
+{
+    if (shouldPlay)
+    {
+        StartPatrolHornLoop();
+    }
+    else
+    {
+        StopPatrolHornLoop();
+    }
 }
