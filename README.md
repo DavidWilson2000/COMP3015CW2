@@ -721,32 +721,25 @@ These additions make the game feel more like a complete prototype because the sy
 ### 90–100 range: research-style advanced features
 
 
-### 1. PCSS soft shadows
+The strongest research-style / advanced features are:
 
-For the shadow filtering feature, I used Randima Fernando’s *Percentage-Closer Soft Shadows* as the main research source. Fernando presents PCSS as an extension of shadow mapping and percentage-closer filtering, where the shader searches for blockers, estimates penumbra size, and then varies the PCF filter size to create softer shadows.
+1. **PCSS-style soft shadows**
+   - Research-supported soft-shadow technique.
+   - Uses blocker search, penumbra estimation, and variable-radius PCF.
 
-I adapted this idea into my own GLSL shadow system. The project first renders a depth map from the light’s point of view, then the main material shader and water shader sample that shadow map. The implementation supports a live **F9** toggle between standard PCF and a PCSS-style mode so the difference can be shown clearly in the video.
+2. **Screen-space ambient occlusion / SSAO**
+   - Depth-texture based post-process.
+   - Adds contact darkening and improves object grounding.
 
-In my implementation, the PCSS mode:
-- searches nearby shadow-map samples for blockers
-- averages blocker depth
-- estimates a penumbra amount from the blocker/receiver depth difference
-- increases the PCF filter radius based on that penumbra
-- uses Poisson disk sampling to soften the result
+3. **Depth of field post-processing**
+   - Uses scene colour and depth textures.
+   - Adds focus-based blur as a real-time cinematic effect.
 
-Relevant files:
-- `basic.frag`
-- `water.frag`
-- `depth.vert`
-- `depth.frag`
-- `main.cpp`
-
-2. **Screen-space god rays / light shafts**
+4. **Screen-space god rays / light shafts**
    - Implemented as a fullscreen post-process.
    - Uses the sun’s screen position and radial sampling.
-   - Tied to the dynamic sun cycle.
 
-3. **Procedural island mesh generation**
+5. **Procedural island mesh generation**
    - Uses generated geometry rather than only static cube props.
    - Produces irregular island silhouettes and surface-following grass.
 
